@@ -1,0 +1,297 @@
+<!DOCTYPE HTML><html>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pcm-player@0.0.15/dist/index.min.js"></script>
+  <head>
+    <base href="./"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1" charset="utf-8">
+    <style>
+      html {font-family : Arial; display: inline-block; text-align: center;}
+        h2 {font-size: 2.3rem;}
+        p {font-size: 1.0rem;}
+        body {max-width: 400px; margin: 0px auto; padding-bottom: 25px; align-items: center;}
+        .button {
+          background-color: #e7ce8d;
+          font-size: 24px;
+          padding: 32px 16px;
+          border-radius: 12px;
+          transition-duration: 0.1s;
+        }
+        .button:active {
+          background-color: #eaaf1b;
+        }
+
+        .cube-content { 
+        width: 100%;
+        background-color: white;
+        height: 300px; margin: auto;
+        padding-top:2%;
+        }
+
+        .alert_text {
+          color:red;
+          font-weight: bold;
+        }
+    
+    </style>
+    <title> Motor monitor </title> 
+  </head>
+  <body>
+    <h2> The monitor </h2>
+    <p> w: forward, s: backward, a and d: turn left and right, respectively </p>
+      <div>
+      <button class="button" id="w" type="button"> W </button>
+      </div>
+    <button class="button", id="a" type="button"> A </button>
+    <button class="button", id="s" type="button"> S </button>
+    <button class="button", id="d" type="button"> D </button>
+    
+    <div>
+    <button class="button", id="i" type="button"> Cam up </button>
+    <button class="button", id="o", type="button"> Cam down </button>
+    <button class="button", id="e", type="button"> Sound </button>
+    </div>
+
+    <div>
+      <p id="motion detected"> No motion detected behind you </p>
+    </div>
+
+    <details>
+      <summary> Configure your vehicle </summary>
+      <form action="/config">
+        <li><input type="text" name="speed" id="speed">
+        <label for="speed"> Enter new speed </label> </li>
+
+        <li>
+        <input type="text" name="lcd text" id="lcd text">
+        <label for="lcd text"> Displayed text </label>
+        </li>
+        <input type="submit" value="Update">
+      </form>
+    </details>
+    <p> Distance to front wall: <span id="distanceFront"> <strong> %DISTANCE% </strong> </span>cm. <br> Distance to back wall: <span id="distanceBack"> <strong> %DISTANCE2% </strong> </span>  cm. </p>
+    <div>
+      <p> Temperature outside: %TEMP% Celcius Degree </p>
+    </div>
+
+    <canvas id="myChart"></canvas>
+
+<!--
+    <div class="cube-content">
+      <div id="3Dcube"> </div>
+    </div>
+    -->
+    <video id="video"> You have not turned on your camera </video>
+   <!--  <div>
+       <img alt="Video stream" src="http://192.168.1.34/mjpeg/1" style="object-fit: contain; height: 100%; width: 100%; background-color: #353535"/> a
+    </div> -->
+
+    
+
+    </div>
+  
+
+    <script type="text/javascript">
+      
+const labels = [];
+for (let i = 1; i <= 512; i++) {
+  labels.push(0.01);
+}
+
+const data = {
+  labels: labels,
+  datasets: [{
+    label: 'My Dataset',
+    data: labels,
+    fill: false,
+    borderColor: 'rgb(75, 192, 192)',
+    tension: 0.1
+  }]
+};
+
+const options = {
+  scales: {
+    y: {
+      beginAtZero: true,
+      suggestedMin : -1000,
+      suggestedMax : 1000
+    }
+  }
+};
+
+const chart = new Chart(document.getElementById('myChart'), {
+  type: 'line',
+  data: data,
+  options: options
+});
+
+player = new PCMPlayer({
+        inputCodec: 'Int16',
+        channels: 1,
+        sampleRate: 22000,
+        flushTime: 1500
+      });
+
+window.onload = _ => {
+  var constraints = {audio : false, video : { width: 480, height: 320 }}
+  navigator.mediaDevices.getUserMedia(constraints).then(mediaStream => {
+    //console.log(mediaStream)
+    var video = document.getElementById('video')
+    video.srcObject  = mediaStream
+    video.onloadedmetadata = () => {
+      video.play();
+    };
+    var canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    video.addEventListener("playing", () => {
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        ws.send(blob)
+      }, "image/jpeg", 0.8)
+    })
+  }).catch(err => console.log("wtf is this video error?" + err.message)) 
+}
+
+var command_tag = 'c';
+var decoder = new TextDecoder("utf-8");
+
+const ws = new WebSocket(location.origin.replace(/http/,'ws'));
+const ws_audio = new WebSocket("ws://192.168.1.24:4001")
+ws.binaryType = "arraybuffer";
+ws_audio.binaryType = "arraybuffer"
+
+ws.addEventListener("open", () => {
+    //audioCont = new AudioContext();
+    console.log("We are connected!");
+}); 
+
+ws_audio.addEventListener("open", ()=> {
+  console.log("audio connected");
+})
+
+const header_size = 2;
+var temp_aubuf = new Int16Array(33792)
+var cur_aupos = 0;
+ws_audio.onmessage = e => {
+
+    var b = new Uint8Array(e.data);
+        var c = [];
+        for (let i = 2, y = 0; i < b.length; i+=2, y++) {
+            var a = ((b[i+1] << 8) | b[i])
+            //console.log(a);
+            if (a > 32767) {
+                a -= 65536
+            }
+            c.push(a);
+        }
+        cur_aupos += 512;
+        if (cur_aupos < temp_aubuf.length) {
+          temp_aubuf.set(Int16Array.from(c), cur_aupos-512)
+        }
+    //  chart.data.datasets[0].data = Int16Array.from(c);
+    //  chart.update();
+    else {
+      player.feed(temp_aubuf.buffer);
+      temp_aubuf = new Int16Array(33792)
+      cur_aupos = 0
+    }
+  }
+
+// Web socket send string as little endian, low byte first, high byte after
+var look_up_table = {
+  "di" : 1,
+  "au" : 2               
+}
+
+ws.addEventListener("message", (event) => {
+  var temp_event = event.data;
+    switch (look_up_table[decoder.decode(new Uint8Array(temp_event.slice(0, header_size)))]) {
+        case 1:
+        var event_data_to_string = temp_event.slice(header_size).toString();
+        var distanceBack = "";
+        var distanceFront = "";
+        var transition = false;
+        for (var i = 0; i < event_data_to_string.length; i++) {
+            if (event_data_to_string[i] != 'b' && !transition) {
+              distanceBack += event_data_to_string[i];
+            }
+            else if (event_data_to_string[i] == 'b' && !transition) {
+              console.log(distanceBack);
+              document.getElementById("distanceBack").innerHTML = distanceBack;
+              transition = true;
+              continue;
+            }
+
+            if (event_data_to_string[i] != 'f' && transition) {
+              distanceFront += event_data_to_string[i];
+            }
+            else if (event_data_to_string[i] == 'f' && transition) {
+              //console.log(distanceFront)
+              document.getElementById("distanceFront").innerHTML = distanceFront;
+              transition = false;
+              continue;
+            }
+          }  
+        break;
+  }     
+})
+      
+      // This section is used to handle keyboard events
+var name_key = 0;
+var pressed = [];
+
+document.addEventListener('keydown', (event) => {    
+  name_key = event.key;
+}, false);
+
+document.getElementById('e').addEventListener('click', () => {
+  document.getElementById('e').style.backgroundColor = "#E9D463"
+  player.volume(50)
+  player.continue();
+})
+
+document.addEventListener('keypress', (event) => {
+  if (!pressed.find(value => value === name_key) && (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c')) {  
+    pressed.push(event.key);
+    var hold = "";
+    for (let i = 0; i < pressed.length; i++) {
+      hold += pressed[i];
+    }
+    ws.send(hold + command_tag);
+    if (pressed.length > 0 && hold != 'cw' && hold != 'cs' && hold != 'ca' && hold != 'cd' && hold != 'c') {
+      pressed.forEach(i => document.getElementById(i).style.backgroundColor = "#E9D463");
+    }    
+  }
+}, false);
+
+document.addEventListener('keyup', (event) => {
+  if (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c') {
+    var index = pressed.findIndex(value => value === event.key);
+    if (document.getElementById(pressed[index]) != null) {
+      document.getElementById(pressed[index]).style.backgroundColor = "#E7CE8D";
+    }  
+    var swap;
+    swap = pressed[pressed.length];
+    pressed[pressed.length] = pressed[index];
+    pressed[index] = swap;
+    pressed.pop();
+    pressed = pressed.filter(bruh=> {return bruh!== undefined});
+    var hold = "";
+    
+    for (let i = 0; i < pressed.length; i++) {
+      hold += pressed[i];
+    }
+
+    if (pressed.length === 0) {
+      ws.send("stop" + command_tag);
+    }
+
+    else {
+      ws.send(hold + command_tag); 
+    }
+    name_key = null;
+  }}, false)
+
+    </script>
+  </html>
