@@ -131,33 +131,37 @@ player = new PCMPlayer({
         flushTime: 1500
       });
 
-window.onload = _ => {
-  var constraints = {audio : false, video : { width: 480, height: 320 }}
-  navigator.mediaDevices.getUserMedia(constraints).then(mediaStream => {
-    //console.log(mediaStream)
-    var video = document.getElementById('video')
+var video = document.getElementById('video')
+var video_canvas = document.getElementById('myChart')
+const canvas_context = video_canvas.getContext('2d')
+video.width = 480
+video.height = 320
+
+var constraints = {audio : false, video : true}
+    navigator.mediaDevices.getUserMedia(constraints).then(mediaStream => {
     video.srcObject  = mediaStream
     video.onloadedmetadata = () => {
+      video_canvas.width = video.width
+      video_canvas.height = video.height
       video.play();
     };
-    var canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    video.addEventListener("playing", () => {
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(blob => {
-        ws.send(blob)
-      }, "image/jpeg", 0.8)
-    })
-  }).catch(err => console.log("wtf is this video error?" + err.message)) 
-}
+
+    video.addEventListener("play", function() {
+      (function loop() {
+      canvas_context.drawImage(video, 0, 0, 480, 320)
+      var photoURL = video_canvas.toDataURL('image/jpeg', 0.8)
+      console.log(photoURL)
+      setTimeout(loop, 1000 / 30); 
+      })();
+
+    }, 0)
+  }).catch(err => console.log("wtf is this video error?" + err.message))
 
 var command_tag = 'c';
 var decoder = new TextDecoder("utf-8");
 
 const ws = new WebSocket(location.origin.replace(/http/,'ws'));
-const ws_audio = new WebSocket("ws://192.168.1.24:4001")
+const ws_audio = new WebSocket("ws://172.19.198.76:4001")
 ws.binaryType = "arraybuffer";
 ws_audio.binaryType = "arraybuffer"
 
