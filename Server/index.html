@@ -89,41 +89,8 @@
 
     </div>
   
-
-    <script type="text/javascript">
-      
-const labels = [];
-for (let i = 1; i <= 512; i++) {
-  labels.push(0.01);
-}
-
-const data = {
-  labels: labels,
-  datasets: [{
-    label: 'My Dataset',
-    data: labels,
-    fill: false,
-    borderColor: 'rgb(75, 192, 192)',
-    tension: 0.1
-  }]
-};
-
-const options = {
-  scales: {
-    y: {
-      beginAtZero: true,
-      suggestedMin : -1000,
-      suggestedMax : 1000
-    }
-  }
-};
-
-const chart = new Chart(document.getElementById('myChart'), {
-  type: 'line',
-  data: data,
-  options: options
-});
-
+<script type="text/javascript">
+     
 player = new PCMPlayer({
         inputCodec: 'Int16',
         channels: 1,
@@ -189,12 +156,11 @@ ws_audio.onmessage = e => {
             }
             c.push(a);
         }
-        cur_aupos += 512;
+        cur_aupos += 512; 
         if (cur_aupos < temp_aubuf.length) {
-          temp_aubuf.set(Int16Array.from(c), cur_aupos-512)
+          temp_aubuf.set(Int16Array.from(c), cur_aupos-512) // The message is completed when 33792 bytes are collected
         }
-    //  chart.data.datasets[0].data = Int16Array.from(c);
-    //  chart.update();
+   
     else {
       player.feed(temp_aubuf.buffer);
       temp_aubuf = new Int16Array(33792)
