@@ -21,7 +21,7 @@ const wss = new WebSocket.Server({server : client_port });
 const seph_command = new WebSocket.Server({server : seph_port});
 
 wss.binaryType = 'arraybuffer'
-
+seph_command.binaryType = 'arraybuffer'
 
 wss.on('connection', function connection(ws, req) {
     const client_ip = req.socket.remoteAddress;
@@ -46,7 +46,7 @@ seph_command.on('connection', (seph, req) => {
     seph.on('message', (data) => {          
         seph_command.clients.forEach(client => {
             if (client !== seph && client.readyState === WebSocket.OPEN) {
-                client.send(data)//.buffer);
+                client.send(data);
             }
         })            
     })
