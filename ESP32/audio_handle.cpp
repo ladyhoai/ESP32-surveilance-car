@@ -24,7 +24,7 @@ void init_i2s() {
     // Reading from INMP441 microphone
     i2s_config_t i2s_conf = {
         .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX),
-        .sample_rate = 16000,
+        .sample_rate = 22000,
         .bits_per_sample = i2s_bits_per_sample_t(16),
         .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT, //I2S_CHANNEL_FMT_ONLY_LEFT,
         .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
