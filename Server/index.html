@@ -1,6 +1,7 @@
 <!DOCTYPE HTML><html>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.2/Chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pcm-player@0.0.15/dist/index.min.js"></script>
+  <script src="https://www.WebRTC-Experiment.com/RecordRTC.js"></script>
   <head>
     <base href="./"/>
     <meta name="viewport" content="width=device-width, initial-scale=1" charset="utf-8">
@@ -74,7 +75,7 @@
     </div>
 
     <canvas id="myChart"></canvas>
-
+    <canvas id="testgraph"></canvas>
 <!--
     <div class="cube-content">
       <div id="3Dcube"> </div>
@@ -89,49 +90,148 @@
 
     </div>
   
-<script type="text/javascript">
-     
-player = new PCMPlayer({
-        inputCodec: 'Int16',
-        channels: 1,
-        sampleRate: 22000,
-        flushTime: 1500
-      });
 
-var video = document.getElementById('video')
-var video_canvas = document.getElementById('myChart')
-const canvas_context = video_canvas.getContext('2d')
-video.width = 480
-video.height = 320
-
-var constraints = {audio : false, video : true}
-    navigator.mediaDevices.getUserMedia(constraints).then(mediaStream => {
-    video.srcObject  = mediaStream
-    video.onloadedmetadata = () => {
-      video_canvas.width = video.width
-      video_canvas.height = video.height
-      video.play();
-    };
-
-    video.addEventListener("play", function() {
-      (function loop() {
-      canvas_context.drawImage(video, 0, 0, 480, 320)
-      var photoURL = video_canvas.toDataURL('image/jpeg', 0.8)
-      console.log(photoURL)
-      setTimeout(loop, 1000 / 30); 
-      })();
-
-    }, 0)
-  }).catch(err => console.log("wtf is this video error?" + err.message))
+    <script type="text/javascript">
 
 var command_tag = 'c';
 var decoder = new TextDecoder("utf-8");
 
 const ws = new WebSocket(location.origin.replace(/http/,'ws'));
-const ws_audio = new WebSocket("ws://172.19.198.76:4001")
+const ws_audio = new WebSocket("ws://192.168.0.51:4001")
+
+// specify the binaryType of web socket messages to ensure that binary transmission is correct.
 ws.binaryType = "arraybuffer";
 ws_audio.binaryType = "arraybuffer"
 
+function base64ToArrayBuffer(base64) {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++)
+        bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+}
+
+// THIS SECTION IS TO TEST AUDIO DATA USING A LINE CHART TO GRAPH THE WAVEFORM
+var testau = [];
+for (let i = 0; i < 6000; i++) {
+  testau.push(i)
+}
+
+var chart_ctx = document.getElementById('testgraph').getContext('2d')
+var charttest = new Chart(chart_ctx, {
+  type: 'line',
+  data: {
+    labels: testau,
+    datasets: [{
+      label: "Audio test",
+      data: testau,
+    }]
+  },
+  options: {
+    scales: {
+      y: {
+        beginAtZero: true
+      }
+    }
+  }
+})
+
+// PCMPlayer is a library imported from CDN which helps us play PCM audio using Web Audio API.
+// We have a total of 1 channel and sample rate of 22kHz. We also specify the duration of the current buffer being played
+// in the 'flushTime' property.
+player = new PCMPlayer({
+        inputCodec: 'Int16',
+        channels: 1,
+        sampleRate: 22000,  //22000 bytes per second
+        flushTime: 1500
+      });
+
+const audio_options = {
+  
+  mimeType: /*'audio/ogg;codecs=opus' */'audio/webm;codecs=pcm', // Only Google Chrome support this codec
+  };
+
+var video = document.getElementById('video')
+var video_canvas = document.getElementById('myChart')
+const canvas_context = video_canvas.getContext('2d')
+video.width = 320 // video width and height have to match the screen size of your TFT display.
+video.height = 240
+
+  // Get user's picture from webcam continuously (18fps), convert to jpeg buffer and send it to nodeJS server
+  navigator.mediaDevices.getUserMedia({video : true}).then(mediaStream => {
+  video.srcObject  = mediaStream
+  video.onloadedmetadata = () => {
+
+    // Setting the width and height of the canvas so that it matches the screen size of your TFT display.
+    // In my case, I have in ILI9341 which has a resolution of 320W x 240H pixels
+    video_canvas.width = video.width
+    video_canvas.height = video.height
+
+    // This function is to activate the "video" element
+    video.play();
+  };
+
+    video.addEventListener("play", function() {
+      (function loop() {
+
+      // The following 2 lines is a workaround to get the jpeg buffer. First, draw it on a canvas element,
+      // Then, convert it to JPEG in a data url with the resolution = 70% of the original image.
+      canvas_context.drawImage(video, 0, 0, 320, 240)
+      var photoURL = video_canvas.toDataURL('image/jpeg', 0.7)
+      
+      // By default, the jpeg url is encoded in base64 to save bandwidth. 
+      // However, as we want to save ESP32 CPU time, we will send raw data so that ESP32 doesn't
+      // have to decode base64, only JPEG needs to be decoded.
+
+      // Slive the header so that the data being sent only contains real image data
+      ws.send(base64ToArrayBuffer(photoURL.slice(jpeg_header_size))) 
+
+      // Get a picture every 1000/18 s, corresponding to 18fps.
+      setTimeout(loop, 1000 / 18); 
+      })();
+
+    }, 0)
+
+    // In case the codecs are not supported, this message will be logged to the console
+  }).catch(err => console.log("wtf is this video error?" + err.message))
+
+  // This is to record user's microphone and send the buffer to nodejs server (mono, 16 kHz)
+  // In earlier test, we found out that the size of the buffer is four times the sample rate. This is because the buffer
+  // contains float32 values, hence increasing the buffer size four times. 
+
+  navigator.mediaDevices.getUserMedia({audio : true}).then(audioStream => {
+
+      var recordAudio = RecordRTC(audioStream, {
+        type: 'audio',
+        mimeType: 'audio/wav',
+        disableLogs: true,
+        recorderType: StereoAudioRecorder,
+        numberOfAudioChannels: 1,
+        audioBitsPerSecond: 128000,
+        desiredSampRate: 16000,
+        timeSlice: 500,
+        ondataavailable: function haha(blob) {
+          blob.arrayBuffer().then(buf => {
+            var temp = new Uint8Array(buf)
+            var temp_2 = []
+            for (let i = 0; i < temp.byteLength; i+=2) {
+              var ac = temp[i+1] << 8 | temp[i]; // this is the correct byte order: little endian
+               
+              if (ac > 32767) {ac -= 65536}
+              temp_2.push(ac)
+            }
+            // To test the endianness of the received audio buffer (int16), we can either 
+            // log it out to the console, or use the line chart to graph it.
+            if (ws_audio.readyState === WebSocket.OPEN)
+            ws_audio.send(Int16Array.from(temp_2)) // send the audio buffer to node js server as a buffer containing int16 values.
+          })
+        },
+      })
+      recordAudio.startRecording()
+  }).catch(err => console.log("mic error " + err.message))
+
+// This section is too handle web socket events : device connected
 ws.addEventListener("open", () => {
     //audioCont = new AudioContext();
     console.log("We are connected!");
@@ -142,25 +242,32 @@ ws_audio.addEventListener("open", ()=> {
 })
 
 const header_size = 2;
-var temp_aubuf = new Int16Array(33792)
+const jpeg_header_size = 23
+var temp_aubuf = new Int16Array(33792) // buffer size for 1.5s of audio
 var cur_aupos = 0;
+
+// Here, we are receiving the audio buffer from nodeJS server (PCM) and output it to the speaker
+// This buffer is recorded with a sample rate of 16000kHz, mono
 ws_audio.onmessage = e => {
 
     var b = new Uint8Array(e.data);
         var c = [];
+        // Swap the endianness back to its correct order
         for (let i = 2, y = 0; i < b.length; i+=2, y++) {
             var a = ((b[i+1] << 8) | b[i])
-            //console.log(a);
+            //converting to int16
             if (a > 32767) {
                 a -= 65536
             }
             c.push(a);
         }
-        cur_aupos += 512; 
+
+        // buffering the data and play it when its length exceed 1.5s (33792 bytes)
+        cur_aupos += 512;
         if (cur_aupos < temp_aubuf.length) {
-          temp_aubuf.set(Int16Array.from(c), cur_aupos-512) // The message is completed when 33792 bytes are collected
+          temp_aubuf.set(Int16Array.from(c), cur_aupos-512)
         }
-   
+    
     else {
       player.feed(temp_aubuf.buffer);
       temp_aubuf = new Int16Array(33792)
@@ -174,8 +281,13 @@ var look_up_table = {
   "au" : 2               
 }
 
+// Here, we receive text data from ESP32 (reading of sonar sensors and motion sensors, maybe gyroscope in the future)
+
 ws.addEventListener("message", (event) => {
   var temp_event = event.data;
+
+  // To correctly recognize what category does the received text belong to, we add some leading characters for 
+  // identification (According to the look up table, "di" refers to distance, meaning this data refers to HCSR-04 readings)
     switch (look_up_table[decoder.decode(new Uint8Array(temp_event.slice(0, header_size)))]) {
         case 1:
         var event_data_to_string = temp_event.slice(header_size).toString();
@@ -190,7 +302,7 @@ ws.addEventListener("message", (event) => {
               console.log(distanceBack);
               document.getElementById("distanceBack").innerHTML = distanceBack;
               transition = true;
-              continue;
+              continue; 
             }
 
             if (event_data_to_string[i] != 'f' && transition) {
@@ -226,7 +338,7 @@ document.addEventListener('keypress', (event) => {
     pressed.push(event.key);
     var hold = "";
     for (let i = 0; i < pressed.length; i++) {
-      hold += pressed[i];
+      hold += pressed[i]; 
     }
     ws.send(hold + command_tag);
     if (pressed.length > 0 && hold != 'cw' && hold != 'cs' && hold != 'ca' && hold != 'cd' && hold != 'c') {
@@ -262,6 +374,5 @@ document.addEventListener('keyup', (event) => {
     }
     name_key = null;
   }}, false)
-
     </script>
   </html>
