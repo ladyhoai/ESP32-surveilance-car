@@ -23,6 +23,7 @@
 #define LCD 0x27
 #define NANO 0x15
 
+// Remember your IP address has to match your subnet mask to communicate with other devices in the same network
 #define IP "192.168.1.36"
 #define NETMASK "255.255.255.0"
 #define GATEWAY "192.168.1.1"
@@ -219,6 +220,16 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
      }
 }
 
+// This handler is to receive audio data from nodejs server and output it to the speaker
+void audio_client_event(void* arg, esp_event_base_t base, int32_t event_id, void* event_data) {
+    if (base == WEBSOCKET_EVENTS) {
+        if (event_id == WEBSOCKET_EVENT_DATA) {
+            esp_websocket_event_data_t* received_buffer = (esp_websocket_event_data_t*) event_data;
+            output_to_speaker(received_buffer->data_ptr, received_buffer->data_len); 
+        }
+    }
+}
+
 // Init sequence: GPIO -> I2C -> Servo -> Mic -> Wifi -> Web Socket 
 
 extern "C" void app_main() {
@@ -278,7 +289,7 @@ extern "C" void app_main() {
     
     // WARNING: I feel like we cannot differentiate between messages using the handler arg
 
-    esp_websocket_register_events(audio_client, WEBSOCKET_EVENT_ANY, event_handler, (char*) 'a');
+    esp_websocket_register_events(audio_client, WEBSOCKET_EVENT_ANY, audio_client_event, (char*) 'a');
     esp_websocket_register_events(uno_command_client, WEBSOCKET_EVENT_ANY, event_handler, (char*) 'c');
 
     esp_websocket_client_start(uno_command_client);
