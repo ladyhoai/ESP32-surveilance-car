@@ -9,6 +9,10 @@
 #define    I2S_SD  GPIO_NUM_33
 #define    I2S_SCK GPIO_NUM_32
 
+#define I2S_WS_SPEAK GPIO_NUM_13
+#define I2S_SD_SPEAK GPIO_NUM_4
+#define I2S_CLK_SPEAK GPIO_NUM_14 
+
 #define    HCSR501 GPIO_NUM_35
 
 #define    CAM_X   GPIO_NUM_19
