@@ -74,6 +74,7 @@
       <p> Temperature outside: %TEMP% Celcius Degree </p>
     </div>
 
+    <image id="Ip_Cam"></image>
     <canvas id="myChart"></canvas>
     <canvas id="testgraph"></canvas>
 <!--
@@ -112,9 +113,20 @@ function base64ToArrayBuffer(base64) {
     return bytes.buffer;
 }
 
+function _arrayBufferToBase64( buffer ) {
+    var binary = '';
+    var bytes = new Uint8Array( buffer );
+    var len = bytes.byteLength;
+    for (var i = 0; i < len; i++) {
+        binary += String.fromCharCode( bytes[ i ] );
+    }
+    return window.btoa( binary );
+}
+
+
 // THIS SECTION IS TO TEST AUDIO DATA USING A LINE CHART TO GRAPH THE WAVEFORM
 var testau = [];
-for (let i = 0; i < 6000; i++) {
+for (let i = 0; i < 33792; i++) {
   testau.push(i)
 }
 
@@ -285,12 +297,13 @@ var look_up_table = {
 
 ws.addEventListener("message", (event) => {
   var temp_event = event.data;
-
   // To correctly recognize what category does the received text belong to, we add some leading characters for 
   // identification (According to the look up table, "di" refers to distance, meaning this data refers to HCSR-04 readings)
+  if (temp_event.byteLength < 100) {
     switch (look_up_table[decoder.decode(new Uint8Array(temp_event.slice(0, header_size)))]) {
         case 1:
-        var event_data_to_string = temp_event.slice(header_size).toString();
+        var event_data_to_string = decoder.decode(new Uint8Array(temp_event.slice(header_size)))
+        //console.log(event_data_to_string)
         var distanceBack = "";
         var distanceFront = "";
         var transition = false;
@@ -299,7 +312,7 @@ ws.addEventListener("message", (event) => {
               distanceBack += event_data_to_string[i];
             }
             else if (event_data_to_string[i] == 'b' && !transition) {
-              console.log(distanceBack);
+              //console.log(distanceBack);
               document.getElementById("distanceBack").innerHTML = distanceBack;
               transition = true;
               continue; 
@@ -316,7 +329,14 @@ ws.addEventListener("message", (event) => {
             }
           }  
         break;
-  }     
+  }} 
+  
+  // Decode the JPEG buffer sent from nodejs server
+   else if (temp_event.byteLength > 200) {
+    //console.log(_arrayBufferToBase64(temp_event))
+    var x = document.getElementById("Ip_Cam");
+    x.setAttribute("src", 'data:image/jpg;base64,'+ _arrayBufferToBase64(temp_event));        
+  }
 })
       
       // This section is used to handle keyboard events
@@ -334,12 +354,13 @@ document.getElementById('e').addEventListener('click', () => {
 })
 
 document.addEventListener('keypress', (event) => {
-  if (!pressed.find(value => value === name_key) && (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c')) {  
+  if (!pressed.find(value => value === name_key) && (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c' || event.key == 'i' || event.key == 'o')) {  
     pressed.push(event.key);
     var hold = "";
     for (let i = 0; i < pressed.length; i++) {
       hold += pressed[i]; 
-    }
+    } 
+    console.log(hold)
     ws.send(hold + command_tag);
     if (pressed.length > 0 && hold != 'cw' && hold != 'cs' && hold != 'ca' && hold != 'cd' && hold != 'c') {
       pressed.forEach(i => document.getElementById(i).style.backgroundColor = "#E9D463");
@@ -348,7 +369,7 @@ document.addEventListener('keypress', (event) => {
 }, false);
 
 document.addEventListener('keyup', (event) => {
-  if (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c') {
+  if (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c' || event.key == 'i' || event.key == 'o') {
     var index = pressed.findIndex(value => value === event.key);
     if (document.getElementById(pressed[index]) != null) {
       document.getElementById(pressed[index]).style.backgroundColor = "#E7CE8D";
