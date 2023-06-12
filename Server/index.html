@@ -49,7 +49,8 @@
     <div>
     <button class="button", id="i" type="button"> Cam up </button>
     <button class="button", id="o", type="button"> Cam down </button>
-    <button class="button", id="e", type="button"> Sound </button>
+    <button class="button", id="e", type="button"> Listen </button>
+    <button class="button", id="talk", type="buttom"> Talk </button>
     </div>
 
     <div>
@@ -58,7 +59,7 @@
 
     <details>
       <summary> Configure your vehicle </summary>
-      <form action="/config">
+      <form id="config">
         <li><input type="text" name="speed" id="speed">
         <label for="speed"> Enter new speed </label> </li>
 
@@ -99,10 +100,12 @@ var decoder = new TextDecoder("utf-8");
 
 const ws = new WebSocket(location.origin.replace(/http/,'ws'));
 const ws_audio = new WebSocket("ws://192.168.0.51:4001")
+const ws_camera = new WebSocket("ws://192.168.0.51:4002")
 
 // specify the binaryType of web socket messages to ensure that binary transmission is correct.
 ws.binaryType = "arraybuffer";
 ws_audio.binaryType = "arraybuffer"
+ws_camera.binaryType = "arraybuffer"
 
 function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
@@ -129,6 +132,14 @@ var testau = [];
 for (let i = 0; i < 33792; i++) {
   testau.push(i)
 }
+
+document.getElementById('config').addEventListener('submit', event => {
+  event.preventDefault();
+
+  const UserFormData = new FormData(document.getElementById('config'));
+  var lcd_value = UserFormData.get('lcd text');
+  ws.send(lcd_value + 'l');
+})
 
 var chart_ctx = document.getElementById('testgraph').getContext('2d')
 var charttest = new Chart(chart_ctx, {
@@ -235,12 +246,15 @@ video.height = 240
             }
             // To test the endianness of the received audio buffer (int16), we can either 
             // log it out to the console, or use the line chart to graph it.
-            if (ws_audio.readyState === WebSocket.OPEN)
+            if (ws_audio.readyState === WebSocket.OPEN && talking)
+
             ws_audio.send(Int16Array.from(temp_2)) // send the audio buffer to node js server as a buffer containing int16 values.
           })
         },
       })
+      
       recordAudio.startRecording()
+       
   }).catch(err => console.log("mic error " + err.message))
 
 // This section is too handle web socket events : device connected
@@ -262,6 +276,7 @@ var cur_aupos = 0;
 // This buffer is recorded with a sample rate of 16000kHz, mono
 ws_audio.onmessage = e => {
 
+  if (audio_playing) {
     var b = new Uint8Array(e.data);
         var c = [];
         // Swap the endianness back to its correct order
@@ -280,12 +295,19 @@ ws_audio.onmessage = e => {
           temp_aubuf.set(Int16Array.from(c), cur_aupos-512)
         }
     
-    else {
-      player.feed(temp_aubuf.buffer);
-      temp_aubuf = new Int16Array(33792)
-      cur_aupos = 0
+      else {
+        player.feed(temp_aubuf.buffer);
+        temp_aubuf = new Int16Array(33792)
+        cur_aupos = 0
+      }
     }
   }
+
+  ws_camera.addEventListener("message", (event) => {
+    console.log(1)
+    var x = document.getElementById("Ip_Cam");
+    x.setAttribute("src", 'data:image/jpg;base64,'+ _arrayBufferToBase64(event.data));   
+  }) 
 
 // Web socket send string as little endian, low byte first, high byte after
 var look_up_table = {
@@ -330,28 +352,45 @@ ws.addEventListener("message", (event) => {
           }  
         break;
   }} 
-  
-  // Decode the JPEG buffer sent from nodejs server
-   else if (temp_event.byteLength > 200) {
-    //console.log(_arrayBufferToBase64(temp_event))
-    var x = document.getElementById("Ip_Cam");
-    x.setAttribute("src", 'data:image/jpg;base64,'+ _arrayBufferToBase64(temp_event));        
-  }
-})
+}) 
       
       // This section is used to handle keyboard events
 var name_key = 0;
 var pressed = [];
 
-document.addEventListener('keydown', (event) => {    
-  name_key = event.key;
-}, false);
-
+var audio_playing = false;
 document.getElementById('e').addEventListener('click', () => {
+
+  if (!audio_playing) {
   document.getElementById('e').style.backgroundColor = "#E9D463"
   player.volume(50)
   player.continue();
+  audio_playing = true;
+  ws.send("conau")
+  }
+  else {
+    document.getElementById('e').style.backgroundColor = "#E7CE8D"
+    audio_playing = false;
+    ws.send("stopau")
+  }
 })
+
+var talking = false;
+document.getElementById('talk').addEventListener('click', () => {
+
+  if (!talking) {
+  document.getElementById('talk').style.backgroundColor = "#E9D463"
+  talking = true;
+  }
+  else {
+    document.getElementById('talk').style.backgroundColor = "#E7CE8D"
+    talking = false;
+  }
+})
+
+document.addEventListener('keydown', (event) => {    
+  name_key = event.key;
+}, false);
 
 document.addEventListener('keypress', (event) => {
   if (!pressed.find(value => value === name_key) && (event.key == 'w' || event.key == 'a' || event.key == 's' || event.key == 'd' || event.key == 'c' || event.key == 'i' || event.key == 'o')) {  
@@ -360,7 +399,7 @@ document.addEventListener('keypress', (event) => {
     for (let i = 0; i < pressed.length; i++) {
       hold += pressed[i]; 
     } 
-    console.log(hold)
+    //console.log(hold)
     ws.send(hold + command_tag);
     if (pressed.length > 0 && hold != 'cw' && hold != 'cs' && hold != 'ca' && hold != 'cd' && hold != 'c') {
       pressed.forEach(i => document.getElementById(i).style.backgroundColor = "#E9D463");
