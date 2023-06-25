@@ -15,7 +15,7 @@ NewPing hcsr04_2(sonarpin1, A0, 200);
 
 int command = 0;
 int num_byte = 0;
-int speed = 150;
+int speed = 250;
 uint32_t current_time = 0;
 
 int distance_back = 0, distance_front = 0;
@@ -63,7 +63,8 @@ void receive_event_handler(int num_byte0) {
 }
 
 void request_event_handler() {
-  Wire.write(distance.c_str());
+  Wire.write(distance_back);
+  Wire.write(distance_front);
 }
 
 void setup() {
@@ -105,17 +106,17 @@ void reset_distance() {
 
 void loop() {
 
-    if (millis() - current_time >= 400)
+    if (millis() - current_time >= 50)
     {
-      distance_back = hcsr04_1.ping_cm(200);
-      distance_front = hcsr04_2.ping_cm(200);
+      distance_front = hcsr04_1.ping_cm(200);
+      distance_back = hcsr04_2.ping_cm(200);
       current_time = millis();
       reset_distance();
-      String a = (distance_length(distance_back) + distance_length(distance_front) + String(distance_back) + String(distance_front));
-      for (int i = 0; i < a.length(); i++) {
-        distance[i] = a[i];
-      }
-      //Serial.print(distance_front);
+      // String a = (distance_length(distance_back) + distance_length(distance_front) + String(distance_back) + String(distance_front));
+      // for (int i = 0; i < a.length(); i++) {
+      //   distance[i] = a[i];
+      // }
+      //Serial.println(a);
     }
 
   if (command == 0) {
@@ -126,16 +127,23 @@ void loop() {
 
   else {
     setMotorSpeed(1);
-     if (distance_back < 15 || distance_front < 15)
-      setMotorSpeed(2);
+    //  if (distance_back < 15 || distance_front < 15)
+    //   setMotorSpeed(2);
     switch (command)
     {
     case 1:
+    //Serial.println((distance_front));
+      if (distance_front >= 10 || distance_front == 0)
       activateMotor(FORWARD, FORWARD, FORWARD, FORWARD);
+      else 
+      rest();
       break;
     
     case 2:
+      if (distance_back >= 10 || distance_back == 0)
       activateMotor(BACKWARD, BACKWARD, BACKWARD, BACKWARD);
+      else
+      rest();
       break;
 
     case 3:
