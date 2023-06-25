@@ -1,7 +1,7 @@
 <!DOCTYPE HTML><html>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.2/Chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pcm-player@0.0.15/dist/index.min.js"></script>
-  <script src="https://www.WebRTC-Experiment.com/RecordRTC.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recordrtc@5.6.2/RecordRTC.min.js"></script>
   <head>
     <base href="./"/>
     <meta name="viewport" content="width=device-width, initial-scale=1" charset="utf-8">
@@ -105,7 +105,7 @@ const ws_camera = new WebSocket("ws://192.168.0.51:4002")
 // specify the binaryType of web socket messages to ensure that binary transmission is correct.
 ws.binaryType = "arraybuffer";
 ws_audio.binaryType = "arraybuffer"
-ws_camera.binaryType = "arraybuffer"
+ws_camera.binaryType = "blob"
 
 function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
@@ -246,9 +246,10 @@ video.height = 240
             }
             // To test the endianness of the received audio buffer (int16), we can either 
             // log it out to the console, or use the line chart to graph it.
-            if (ws_audio.readyState === WebSocket.OPEN && talking)
-
+            if (ws_audio.readyState === WebSocket.OPEN && talking) {
             ws_audio.send(Int16Array.from(temp_2)) // send the audio buffer to node js server as a buffer containing int16 values.
+            console.log("Audio is being sent")
+            }
           })
         },
       })
@@ -306,7 +307,8 @@ ws_audio.onmessage = e => {
   ws_camera.addEventListener("message", (event) => {
     console.log(1)
     var x = document.getElementById("Ip_Cam");
-    x.setAttribute("src", 'data:image/jpg;base64,'+ _arrayBufferToBase64(event.data));   
+    x.src = (window.URL || window.webkitURL).createObjectURL(event.data) 
+    //x.setAttribute("src", 'data:image/jpg;base64,'+ _arrayBufferToBase64(event.data));   
   }) 
 
 // Web socket send string as little endian, low byte first, high byte after
@@ -381,10 +383,12 @@ document.getElementById('talk').addEventListener('click', () => {
   if (!talking) {
   document.getElementById('talk').style.backgroundColor = "#E9D463"
   talking = true;
+  ws.send("consp")
   }
   else {
     document.getElementById('talk').style.backgroundColor = "#E7CE8D"
     talking = false;
+    ws.send("stopsp")
   }
 })
 
