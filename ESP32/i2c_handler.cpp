@@ -81,6 +81,14 @@ i2c_conf.master.clk_speed = 100000;
 
 i2c_driver_install(I2C_PORT, i2c_conf.mode, 0, 0, 0);
 i2c_param_config(I2C_PORT, &i2c_conf);
+
+i2c_conf.sda_io_num = SDA_LCD;
+i2c_conf.scl_io_num = SCL_LCD;
+i2c_conf.scl_pullup_en = true;
+i2c_conf.sda_pullup_en = true;
+
+i2c_driver_install(I2C_PORT_LCD, i2c_conf.mode, 0, 0, 0);
+i2c_param_config(I2C_PORT_LCD, &i2c_conf);
 }
 
 void send_command_to_uno(uint8_t byte, uint8_t slave_address, int num_bytes) {
