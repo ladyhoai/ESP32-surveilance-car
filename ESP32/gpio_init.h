@@ -5,7 +5,7 @@
 #include <car_pin.h>
 
 // I don't know whether we need to initialize sda and scl pin
-#define OUTPUT_PIN ( /*(1ULL << CAM_Y) | */ (1ULL << STEPPER_EN) | (1ULL << STEPPER_DIR) /*| (1ULL << CAM_X)*/ | (1ULL << 2))
+#define OUTPUT_PIN ( (1ULL << SPEAKER_EN) |  (1ULL << STEPPER_EN) | (1ULL << STEPPER_DIR) /*| (1ULL << CAM_X)*/ | (1ULL << 2))
 
 void init_gpio() {
 gpio_config_t io_conf = {
@@ -19,4 +19,3 @@ gpio_config_t io_conf = {
 }
 
 #endif
-
