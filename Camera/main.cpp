@@ -12,39 +12,56 @@
 */
 #define APP_CPU 1
 #define PRO_CPU 0
-#include "OV2640.h"
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
+
+#include <OV2640.h>
 #include <WiFi.h>
-#include <WebServer.h>
-#include <WiFiClient.h>
+//#include <WebServer.h>
+//#include <WiFiClient.h>
 
 #include <esp_bt.h>
 #include <esp_wifi.h>
+#include "esp_wpa2.h"
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 #include <driver/i2s.h>
-#include <esp_http_server.h>
-// Select camera model
-//#define CAMERA_MODEL_WROVER_KIT
-//define CAMERA_MODEL_ESP_EYE
-//#define CAMERA_MODEL_M5STACK_PSRAM
-//#define CAMERA_MODEL_M5STACK_WIDE
+#include <esp_websocket.h>
+#include <esp_event.h>
+#include <esp_log.h>
+#include <esp_err.h>
+#include <nvs_flash.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/event_groups.h>
+
 #define CAMERA_MODEL_AI_THINKER
 
 #include "camera_pins.h"
 
 
-#define SSID1 "Beverly Hills"
-#define PWD1 "Baolinh2209@#$"
+#define SSID "OPTUS_4AFB46M"
+#define ID "14363978"
+#define PASS "aliya67945du"
 
+esp_websocket_client_handle_t client;
+const esp_websocket_client_config_t client_conf = {
+  .uri = "ws://192.168.0.51",
+  .port = 4002,
+  .disable_auto_reconnect = false,
+  .buffer_size = 15000
+};
+
+static uint8_t wifi_reconnecting_num = 0;
 
 OV2640 cam;
 // Set your Static IP address
-IPAddress local_IP(192, 168, 1, 34);
+IPAddress local_IP(172, 19, 119, 11);
 // Set your Gateway IP address
-IPAddress gateway(192, 168, 1, 24);
+IPAddress gateway(172, 19, 124, 1);
 
-IPAddress subnet(255, 255, 0, 0);
-WebServer server(80);
+IPAddress subnet(255, 255, 254, 0);
+//WebServer server(80);
 
 // ===== rtos task handles =========================
 // Streaming is implemented with 3 tasks:
@@ -174,46 +191,6 @@ void camCB(void* pvParameters) {
   }
 }
 
-
-// ==== Memory allocator that takes advantage of PSRAM if present =======================
-
-
-
-// ==== STREAMING ======================================================
-const char HEADER[] = "HTTP/1.1 200 OK\r\n" \
-                      "Access-Control-Allow-Origin: *\r\n" \
-                      "Content-Type: multipart/x-mixed-replace; boundary=123456789000000000000987654321\r\n";
-const char BOUNDARY[] = "\r\n--123456789000000000000987654321\r\n";
-const char CTNTTYPE[] = "Content-Type: image/jpeg\r\nContent-Length: ";
-const int hdrLen = strlen(HEADER);
-const int bdrLen = strlen(BOUNDARY);
-const int cntLen = strlen(CTNTTYPE);
-
-
-// ==== Handle connection request from clients ===============================
-void handleJPGSstream(void)
-{
-  //  Can only acommodate 10 clients. The limit is a default for WiFi connections
-  if ( !uxQueueSpacesAvailable(streamingClients) ) return;
-
-
-  //  Create a new WiFi Client object to keep track of this one
-  WiFiClient* client = new WiFiClient();
-  *client = server.client();
-
-  //  Immediately send this client a header
-  client->write(HEADER, hdrLen);
-  client->write(BOUNDARY, bdrLen);
-
-  // Push the client to the streaming queue
-  xQueueSend(streamingClients, (void *) &client, 0);
-
-  // Wake up streaming tasks, if they were previously suspended:
-  if ( eTaskGetState( tCam ) == eSuspended ) vTaskResume( tCam );
-  if ( eTaskGetState( tStream ) == eSuspended ) vTaskResume( tStream );
-}
-
-
 // ==== Actually stream content to all connected clients ========================
 void streamCB(void * pvParameters) {
   char buf[16];
@@ -231,90 +208,47 @@ void streamCB(void * pvParameters) {
     xFrequency = pdMS_TO_TICKS(1000 / FPS);
 
     //  Only bother to send anything if there is someone watching
-    UBaseType_t activeClients = uxQueueMessagesWaiting(streamingClients);
-    if ( activeClients ) {
-      // Adjust the period to the number of connected clients
-      xFrequency /= activeClients;
-
-      //  Since we are sending the same frame to everyone,
-      //  pop a client from the the front of the queue
-      WiFiClient *client;
-      xQueueReceive (streamingClients, (void*) &client, 0);
-
-      //  Check if this client is still connected.
-
-      if (!client->connected()) {
-        //  delete this client reference if s/he has disconnected
-        //  and don't put it back on the queue anymore. Bye!
-        delete client;
-      }
-      else {
 
         //  Ok. This is an actively connected client.
         //  Let's grab a semaphore to prevent frame changes while we
         //  are serving this frame
         xSemaphoreTake( frameSync, portMAX_DELAY );
 
-        client->write(CTNTTYPE, cntLen);
-        sprintf(buf, "%d\r\n\r\n", camSize);
-        client->write(buf, strlen(buf));
-        client->write((char*) camBuf, (size_t)camSize);
-        client->write(BOUNDARY, bdrLen);
-
-        // Since this client is still connected, push it to the end
-        // of the queue for further processing
-        xQueueSend(streamingClients, (void *) &client, 0);
+        esp_websocket_client_send_bin(client, (char*) camBuf, (size_t) camSize, portMAX_DELAY);
 
         //  The frame has been served. Release the semaphore and let other tasks run.
         //  If there is a frame switch ready, it will happen now in between frames
         xSemaphoreGive( frameSync );
         taskYIELD();
-      }
-    }
-    else {
-      //  Since there are no connected clients, there is no reason to waste battery running
-      vTaskSuspend(NULL);
-    }
+    
     //  Let other tasks run after serving every client
     taskYIELD();
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
+void handle_data(void* arg, esp_event_base_t base, int32_t event_id, void* event_data) {
+  if (base == WEBSOCKET_EVENTS) {
+    if (event_id == WEBSOCKET_EVENT_CONNECTED) {
+      esp_websocket_client_send_bin(client, "cam", 3, 1000/portTICK_PERIOD_MS);
+      Serial.println("Connected to server");
+    }
 
-
-const char JHEADER[] = "HTTP/1.1 200 OK\r\n" \
-                       "Content-disposition: inline; filename=capture.jpg\r\n" \
-                       "Content-type: image/jpeg\r\n\r\n";
-const int jhdLen = strlen(JHEADER);
-
-// ==== Serve up one JPEG frame =============================================
-void handleJPG(void)
-{
-  WiFiClient client = server.client();
-
-  if (!client.connected()) return;
-  cam.run();
-  client.write(JHEADER, jhdLen);
-  client.write((char*)cam.getfb(), cam.getSize());
-}
-
-
-// ==== Handle invalid URL requests ============================================
-void handleNotFound()
-{
-  String message = "Server is running!\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  server.send(200, "text / plain", message);
+    else if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
+      Serial.println("Disconnected from server");
+      ESP.restart();
+    }
+  }
 }
 
 void mjpegCB(void* pvParameters) {
+
+  // for (;;) {
+  //   cam.run();
+  //   size_t s = cam.getSize();
+  //   Serial.println(s);
+  //   vTaskDelay(1000);
+  // }
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(WSINTERVAL);
 
@@ -322,8 +256,9 @@ void mjpegCB(void* pvParameters) {
   frameSync = xSemaphoreCreateBinary();
   xSemaphoreGive( frameSync );
 
-  // Creating a queue to track all connected clients
-  streamingClients = xQueueCreate( 10, sizeof(WiFiClient*) );
+  client = esp_websocket_client_init(&client_conf);
+  esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, handle_data, NULL);
+  esp_websocket_client_start(client);
 
   //=== setup section  ==================
 
@@ -348,17 +283,17 @@ void mjpegCB(void* pvParameters) {
     APP_CPU);
 
   //  Registering webserver handling routines
-  server.on("/mjpeg/1", HTTP_GET, handleJPGSstream);
-  server.on("/jpg", HTTP_GET, handleJPG);
-  server.onNotFound(handleNotFound);
+  //server.on("/mjpeg/1", HTTP_GET, handleJPGSstream);
+  //server.on("/jpg", HTTP_GET, handleJPG);
+  //server.onNotFound(handleNotFound);
 
   //  Starting webserver
-  server.begin();
+  //server.begin();
 
   //=== loop() section  ===================
   xLastWakeTime = xTaskGetTickCount();
   for (;;) {
-    server.handleClient();
+    // server.handleClient();
 
     //  After every server client handling request, we let other tasks run and then pause
     taskYIELD();
@@ -366,10 +301,177 @@ void mjpegCB(void* pvParameters) {
   }
 }
 
+void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* event_data) {
+  if (base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            ESP_LOGI("WIFI", "CONNECTING...");
+        }
+
+        else if (event_id == WIFI_EVENT_STA_CONNECTED) {
+           // set_static_ip(IP, NETMASK, GATEWAY, (esp_netif_t*) arg);
+            ESP_LOGI("WIFI", "STATIC IP SET");
+        }    
+
+        else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            gpio_set_level(GPIO_NUM_2, 0);
+            if (wifi_reconnecting_num < 10) {
+                esp_wifi_connect();
+                wifi_reconnecting_num++;
+                ESP_LOGI(WIFI_TAG, "Reconnecting to AP");
+            }
+
+            else {
+                xEventGroupSetBits((EventGroupHandle_t) arg, WIFI_FAIL_BIT);
+            }
+        }
+    }
+    // Green is Ground, Gray is 5V
+    else if (base == IP_EVENT) {
+        if (event_id == IP_EVENT_STA_GOT_IP) {
+            ip_event_got_ip_t* ip = (ip_event_got_ip_t*) event_data;
+            ESP_LOGI(WIFI_TAG, "Got IP:" IPSTR, IP2STR(&ip->ip_info.ip));
+            wifi_reconnecting_num = 0;
+            xEventGroupSetBits((EventGroupHandle_t) arg, WIFI_CONNECTED_BIT);
+            gpio_set_level(GPIO_NUM_2, 1);
+        }
+    }
+
+}
+
+void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, void*), nvs_handle_t handle_flash) {
+
+    EventGroupHandle_t s_wifi_event_group;
+    s_wifi_event_group = xEventGroupCreate();
+    ESP_ERROR_CHECK(esp_netif_init());
+
+    ESP_LOGI("Wifi", "event loop successfully created");
+    
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    // netif mean network information
+    esp_netif_t* sta_netif = esp_netif_create_default_wifi_sta();
+    assert(sta_netif);
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_disconnected;
+    esp_event_handler_instance_t instance_got_ip;
+    esp_event_handler_instance_t instance_start_wifi;
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, event_handler, sta_netif, &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, event_handler, NULL, &instance_start_wifi));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event_handler, s_wifi_event_group, &instance_got_ip));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, event_handler, s_wifi_event_group, &instance_disconnected));
+    
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+
+    // UTS Authentication
+    // esp_wifi_sta_wpa2_ent_set_identity((uint8_t*) ID, strlen(ID));
+    // esp_wifi_sta_wpa2_ent_set_username((uint8_t*) USERNAME, strlen(USERNAME));
+    // esp_wifi_sta_wpa2_ent_set_password((uint8_t*) PASSWORD, strlen(PASSWORD));
+    // esp_wifi_sta_wpa2_ent_enable();
+
+    // Uncomment the line below to use Michael's network
+    // ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_conf));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+        wifi_scan_config_t scan = {
+            .ssid = 0,
+            .bssid = 0,
+            .channel = 0,
+            .show_hidden = true
+            };
+
+            ESP_ERROR_CHECK(esp_wifi_scan_start(&scan, true));
+            uint16_t number = 5;
+            wifi_ap_record_t record[number];
+            memset(record, 0, sizeof(record));
+            uint16_t ap_count = 0;
+            ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, record));  
+            ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+            ESP_LOGI("WiFi", "Total APs scanned = %u", ap_count);  
+            
+            for (int i = 0; i < ap_count; i++) {
+                size_t required_size = 0;
+                ESP_LOGI("Wifi","Signal strength is: %d \n", record[i].rssi);
+                esp_err_t check = nvs_get_str(handle_flash, (const char*)record[i].ssid, NULL, &required_size);
+                
+                if (check == ESP_OK) {
+                    char* val = (char*) malloc(required_size);
+                    nvs_get_str(handle_flash, (const char*)record[i].ssid, val, &required_size);
+                    ESP_LOGI("Wifi","Password is: %s \n", val);
+                    
+                    static wifi_config_t wifi_conf;
+
+                    strcpy((char*)wifi_conf.sta.ssid, (const char*) record[i].ssid);
+                    strcpy((char*)wifi_conf.sta.password , val);
+
+                    esp_wifi_set_config(WIFI_IF_STA, &wifi_conf);
+                    
+                    free(val);
+
+                    esp_wifi_connect();
+
+                    break;
+                }
+
+                else if (check == ESP_ERR_NVS_NOT_FOUND) {
+                    ESP_LOGI("WiFi", "Password is not yet stored for this SSID %s", (const char*)record[i].ssid);
+                    continue;
+                }
+            }
+
+
+    // Up till this point, the sta init has finished
+    // Wait bits simply wait for either WIFI_CONNECTED_BIT or WIFI_FAIL_BIT to set, wait time depends on the last param of
+    // the function. Here, portMAX_DELAY means the program will keep waiting til' one of the 2 bits is set
+
+    // Maybe in the future we can try to make a timeout for this
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    ESP_LOGI("Wifi", "Wifi bits set");
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(WIFI_TAG, "Connected to SSID: %s", SSID);
+    }
+    else if (bits & WIFI_FAIL_BIT) {
+        ESP_LOGI(WIFI_TAG, "Failed to connect to SSID: %s", SSID);
+    }
+    else {
+        ESP_LOGI(WIFI_TAG, "Unexpected Wifi Event");
+    }
+    
+    // ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &instance_any_id));
+    // ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, WIFI_EVENT_STA_START, &instance_start_wifi));
+    // ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &instance_got_ip));
+    // ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &instance_disconnected));
+    // vEventGroupDelete(s_wifi_event_group);
+}
+
 // ==== SETUP method ==================================================================
+//#define WRITE_TO_FLASH
 void setup()
 {
+  esp_err_t ret = nvs_flash_init();
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  nvs_handle_t handle_flash;
+  nvs_open("storage", NVS_READWRITE, &handle_flash);
 
+#ifdef WRITE_TO_FLASH
+
+    nvs_set_str(handle_flash, "OPTUS_4AFB46M", "aliya67945du");
+    nvs_commit(handle_flash);
+    nvs_set_str(handle_flash, "haha", "123456789");
+    nvs_commit(handle_flash);
+    nvs_set_str(handle_flash, "Guests network", "thisisaguestnetwork");
+    nvs_commit(handle_flash);
+    nvs_set_str(handle_flash, "Miyagi", "ln21157003");
+    nvs_commit(handle_flash);
+    nvs_set_str(handle_flash, "UTS-WiFi", "I14363978Pln31042003!");
+    nvs_commit(handle_flash);
+    nvs_set_str(handle_flash, "iPhone 13ProMax Ha", "helloeveryone");
+    nvs_commit(handle_flash);
+#endif
   // Setup Serial connection:
   Serial.begin(115200);
   delay(1000); // wait for a second to let Serial connect
@@ -420,23 +522,22 @@ void setup()
 
   //  Configure and connect to WiFi
   IPAddress ip;
-if (!WiFi.config(local_IP, gateway, subnet)) {
-    Serial.println("STA Failed to configure");
-  }
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(SSID1, PWD1);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(F("."));
-  }
-  ip = WiFi.localIP();
-  Serial.println(F("WiFi connected"));
-  Serial.println("");
-  Serial.print("Stream Link: http://");
-  Serial.print(ip);
-  Serial.println("/mjpeg/1");
+// if (!WiFi.config(local_IP, gateway, subnet)) {
+//     Serial.println("STA Failed to configure");
+//   }
+  
+
+  // esp_wifi_set_mode(WIFI_MODE_STA);
+  // esp_wifi_sta_wpa2_ent_set_identity((uint8_t*) ID, strlen(ID));
+  // esp_wifi_sta_wpa2_ent_set_username((uint8_t*) ID, strlen(ID));
+  // esp_wifi_sta_wpa2_ent_set_password((uint8_t*) PASS, strlen(PASS));
+  // esp_wifi_sta_wpa2_ent_enable();
+
+  connect_to_wifi(event_handler, handle_flash);
+  ESP_LOGI("WiFi", "Connecting to WiFi");
+  // Serial.print("Stream Link: http://");
+  // Serial.print(ip);
+  // Serial.println("/mjpeg/1");
 
 
   // Start mainstreaming RTOS task
@@ -452,5 +553,5 @@ if (!WiFi.config(local_IP, gateway, subnet)) {
 
 
 void loop() {
-  vTaskDelay(1000);
+  vTaskDelay(500);
 }
