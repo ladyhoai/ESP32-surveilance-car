@@ -238,6 +238,21 @@ void handle_data(void* arg, esp_event_base_t base, int32_t event_id, void* event
       Serial.println("Disconnected from server");
       ESP.restart();
     }
+
+    else if (event_id == WEBSOCKET_EVENT_DATA) {
+      esp_websocket_event_data_t* received_command = (esp_websocket_event_data_t*) event_data;
+      std::string temp (received_command->data_ptr, received_command->data_len);
+      //Serial.println("hi");
+      switch (temp[temp.size() - 1]) {
+        case 'q': {
+          temp.pop_back();
+          int val = stoi(temp);
+          sensor_t* config = esp_camera_sensor_get();
+          config->set_quality(config, val);
+          break;
+        }     
+      }
+    }
   }
 }
 
@@ -335,7 +350,6 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
             gpio_set_level(GPIO_NUM_2, 1);
         }
     }
-
 }
 
 void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, void*), nvs_handle_t handle_flash) {
@@ -465,11 +479,11 @@ void setup()
     nvs_commit(handle_flash);
     nvs_set_str(handle_flash, "Guests network", "thisisaguestnetwork");
     nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "Miyagi", "ln21157003");
-    nvs_commit(handle_flash);
+    
     nvs_set_str(handle_flash, "UTS-WiFi", "I14363978Pln31042003!");
     nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "iPhone 13ProMax Ha", "helloeveryone");
+    
+    nvs_set_str(handle_flash, "ZMI_C8D3", "64682812");
     nvs_commit(handle_flash);
 #endif
   // Setup Serial connection:
@@ -503,11 +517,10 @@ void setup()
   // Frame parameters: pick one
   //  config.frame_size = FRAMESIZE_UXGA;
   //  config.frame_size = FRAMESIZE_SVGA;
-  //  config.frame_size = FRAMESIZE_QVGA;
+  //config.frame_size = FRAMESIZE_QQVGA;
   config.frame_size = FRAMESIZE_HVGA;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = 40;
   config.fb_count = 2;
-
 #if defined(CAMERA_MODEL_ESP_EYE)
   pinMode(13, INPUT_PULLUP);
   pinMode(14, INPUT_PULLUP);
@@ -554,4 +567,5 @@ void setup()
 
 void loop() {
   vTaskDelay(500);
+  
 }
