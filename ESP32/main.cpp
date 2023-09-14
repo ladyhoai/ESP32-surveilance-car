@@ -6,6 +6,8 @@
 #include <i2c_handler.h>
 #include <lcd_handler.h>
 #include <gpio_init.h>
+#include <freertos/ringbuf.h>
+#include <driver/uart.h>
 
 #include <string>
 #include <unordered_map>
@@ -51,6 +53,7 @@ TaskHandle_t camera_task;
 TaskHandle_t sonar_sensor_task;
 TaskHandle_t audio_task_handle;
 TaskHandle_t lcd_task_handle;
+RingbufHandle_t speakerBuf;
 
 // SemaphoreHandle_t camera_axis_sem;
 esp_websocket_client_handle_t audio_client;
@@ -66,15 +69,15 @@ char line_2_lcd[16];
 
 // This connection is for constant streaming of audio
 const esp_websocket_client_config_t audio_client_conf = {
-  .uri = "ws://192.168.0.51",
-  .port = 4001, // This is the server port where our client is connected
+  .uri = "ws://34.87.246.254",
+  .port = 4005, // This is the server port where our client is connected, 4001 for mic, 4005 for speaker
   .disable_auto_reconnect = false,
  // .headers = "identifier: audio client",
-  .buffer_size = 20000,
+  .buffer_size = 5000,
 };
 // This connection is for receiving command from network client
 const esp_websocket_client_config_t uno_command_client_conf = {
-    .uri = "ws://192.168.0.51",
+    .uri = "ws://34.87.246.254",
     .port = 4000,
     .disable_auto_reconnect = false,
   //  .headers = "identifier: Command client",
@@ -95,30 +98,30 @@ void servo_task(void* param) {
             switch (cam_axis_command) {
 
             case 7:
-                if (cam_y_cur_angle < 90) {
-                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_Y_CHANNEL, cam_y_cur_angle + 2);
-                cam_y_cur_angle += 2;
+                if (cam_y_cur_angle < 80) {
+                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_Y_CHANNEL, cam_y_cur_angle + 0.5f);
+                cam_y_cur_angle += 0.5f;
                 }
             break;
 
             case 8:
                 if (cam_y_cur_angle > 0) {
-                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_Y_CHANNEL, cam_y_cur_angle - 2);
-                cam_y_cur_angle -= 2;
+                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_Y_CHANNEL, cam_y_cur_angle - 0.5f);
+                cam_y_cur_angle -= 0.5f;
                 }
             break;
 
             case 9:
-                if (cam_x_cur_angle < 180) {
-                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_X_CHANNEL, cam_x_cur_angle + 2);
-                cam_x_cur_angle += 2;
+                if (cam_x_cur_angle < 165) {
+                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_X_CHANNEL, cam_x_cur_angle + 0.5f);
+                cam_x_cur_angle += 0.5f;
                 }
             break;
 
             case 10:
-                if (cam_x_cur_angle > 0) {
-                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_X_CHANNEL, cam_x_cur_angle - 2);
-                cam_x_cur_angle -= 2;
+                if (cam_x_cur_angle > 15) {
+                iot_servo_write_angle(LEDC_LOW_SPEED_MODE, CAM_X_CHANNEL, cam_x_cur_angle - 0.5f);
+                cam_x_cur_angle -= 0.5f;
                 }
             break;
             }
@@ -140,7 +143,11 @@ void read_distance_task(void* param) {
         esp_websocket_client_send_text(uno_command_client, distance_string.c_str(), distance_string.size(), 10000 / portTICK_PERIOD_MS);
         }
         // this function will trigger in a 500ms interval
-        
+
+        // Temporarily checking RSSI
+        wifi_ap_record_t ap;
+        esp_wifi_sta_get_ap_info(&ap);
+        printf("%d\n", ap.rssi);
         xTaskDelayUntil(&last_wake_time, 500 / portTICK_PERIOD_MS);
     }
 }
@@ -204,6 +211,7 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
     // Arg is the parameter passed to the handler when we register a new event
     if (base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_STA_START) {
+            esp_wifi_connect();
             ESP_LOGI("WIFI", "CONNECTING...");
         }
 
@@ -232,7 +240,7 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
             ESP_LOGI(WIFI_TAG, "Got IP:" IPSTR, IP2STR(&ip->ip_info.ip));
             wifi_reconnecting_num = 0;
             xEventGroupSetBits((EventGroupHandle_t) arg, WIFI_CONNECTED_BIT);
-            gpio_set_level(GPIO_NUM_2, 1);
+            gpio_set_level(GPIO_NUM_23, 1);
         }
     }
 
@@ -299,8 +307,11 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
         }
 
         else if (event_id == WEBSOCKET_EVENT_CONNECTED) {
-            ESP_LOGI("Web", "client connected");
             esp_websocket_client_send_bin(uno_command_client, "esp", 3, 10000/portTICK_PERIOD_MS);
+            LCD_clearScreen();
+            LCD_setCursor(0, 0);
+            LCD_writeStr("Connected");
+
         }
      }
 }
@@ -308,21 +319,39 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
 void audio_client_event(void* arg, esp_event_base_t base, int32_t event_id, void* event_data) {
     if (base == WEBSOCKET_EVENTS) {
         if (event_id == WEBSOCKET_EVENT_DATA) {
+            
             esp_websocket_event_data_t* received_buffer = (esp_websocket_event_data_t*) event_data;
+            xRingbufferSend(speakerBuf, received_buffer->data_ptr, received_buffer->data_len, 1000 / portTICK_PERIOD_MS);
             //ESP_LOGI("audio", "len: %d", received_buffer->data_len);
-            output_to_speaker(received_buffer->data_ptr, received_buffer->data_len); 
-            received_buffer->data_ptr = NULL;
+            //output_to_speaker(received_buffer->data_ptr, received_buffer->data_len); 
+            // received_buffer->data_ptr = NULL;
             //sprintf(temp_audio_buffer, received_buffer->data_ptr);
             // for (int i = 0; i < 5; i++)
             // printf("%d", *(received_buffer->data_ptr + i));
         }
     }
 }
+
+void speaker_task(void* param) {
+    while (true) {
+        size_t item_size;
+        char* item = (char*) xRingbufferReceive(speakerBuf, &item_size, 300 / portTICK_PERIOD_MS);
+        if (item != NULL) {
+            output_to_speaker(item, item_size);
+            vRingbufferReturnItem(speakerBuf, (void*) item);
+        }
+        else {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+}
 // Init sequence: GPIO -> I2C -> Servo -> Mic -> Wifi -> Web Socket 
 
 //#define WRITE_TO_FLASH
+#define ESPSPK
 extern "C" void app_main() {
-
+    
+    vTaskDelay(25000 / portTICK_PERIOD_MS);
     esp_err_t ret = nvs_flash_init();
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     nvs_handle_t handle_flash;
@@ -331,16 +360,6 @@ extern "C" void app_main() {
     #ifdef WRITE_TO_FLASH
 
     nvs_set_str(handle_flash, "OPTUS_4AFB46M", "aliya67945du");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "haha", "123456789");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "Guests network", "thisisaguestnetwork");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "Miyagi", "ln21157003");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "UTS-WiFi", "I14363978Pln31042003!");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "iPhone 13ProMax Ha", "helloeveryone");
     nvs_commit(handle_flash);
 
     #endif
@@ -363,8 +382,17 @@ extern "C" void app_main() {
     // free(val);
 
     // Init GPIO
+    #ifdef ESPSPK
+    speakerBuf = xRingbufferCreateNoSplit(5000, 5);
+    if (speakerBuf == NULL) {
+        ESP_LOGI("Ring Buf", "Init ring buffer failed");
+    }
+    #endif
+
+    #ifndef ESPSPK
     init_gpio();
     ESP_LOGI("GPIO", "GPIO INIT DONE");
+    #endif
 
     // Init I2C
     I2C_clearBus(SDA, SCL);
@@ -373,6 +401,7 @@ extern "C" void app_main() {
     init_i2c();
     ESP_LOGI("I2C", " INIT DONE");
     
+    #ifndef ESPSPK
     //Init LCD.
     LCD_init(LCD, 16, 2);
     ESP_LOGI("LCD", "INIT DONE");
@@ -386,10 +415,12 @@ extern "C" void app_main() {
     camera_axis_init(CAM_X, CAM_Y, CAM_X_CHANNEL, CAM_Y_CHANNEL);
     ESP_LOGI("Servo", "INIT DONE");
 
+    #endif
     //Init Wifi
     
     connect_to_wifi(event_handler, handle_flash);
 
+    #ifndef ESPSPK
     xTaskCreatePinnedToCore(read_distance_task, "Sonar sensor", 2048, NULL, 1, &sonar_sensor_task, 1);
     ESP_LOGI("Sonar sensor", "Task created");
 
@@ -397,24 +428,33 @@ extern "C" void app_main() {
     ESP_LOGI("Servo", "Servo task created");
 
     xTaskCreatePinnedToCore(lcd_task, "LCD", 1024, NULL, 2, &lcd_task_handle, 1);
-
+    #endif
     // Init I2S
     init_i2s();
     ESP_LOGI("I2S", " INIT DONE");
 
+    #ifndef ESPSPK
+
     xTaskCreatePinnedToCore(audio_task, "audio task", 2048, NULL, 1, &audio_task_handle, 0);
     vTaskSuspend(audio_task_handle);
 
+    #endif
     // Establishing connection between esp32 and node js server
     audio_client = esp_websocket_client_init(&audio_client_conf);
+
+    #ifndef ESPSPK
     uno_command_client = esp_websocket_client_init(&uno_command_client_conf);
-    
+    esp_websocket_register_events(uno_command_client, WEBSOCKET_EVENT_ANY, event_handler, (char*) 'c');
+    esp_websocket_client_start(uno_command_client);
+
+    #endif
     // WARNING: I feel like we cannot differentiate between messages using the handler arg
 
+    #ifdef ESPSPK
+    xTaskCreate(speaker_task, "speaker", 5000, NULL, 1, NULL);
     esp_websocket_register_events(audio_client, WEBSOCKET_EVENT_ANY, audio_client_event, (char*) 'a');
-    esp_websocket_register_events(uno_command_client, WEBSOCKET_EVENT_ANY, event_handler, (char*) 'c');
+    #endif
 
-    esp_websocket_client_start(uno_command_client);
     esp_websocket_client_start(audio_client);
 
-}
+} 
