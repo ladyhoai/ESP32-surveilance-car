@@ -57,8 +57,16 @@ void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, vo
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_START, event_handler, NULL, &instance_start_wifi));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event_handler, s_wifi_event_group, &instance_got_ip));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, event_handler, s_wifi_event_group, &instance_disconnected));
-    
+        
+    wifi_config_t wifi_conf = {
+            .sta {
+                .ssid = SSID,
+                .password = PASS,
+            }
+        };
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_conf));
 
     // UTS Authentication
     // esp_wifi_sta_wpa2_ent_set_identity((uint8_t*) ID, strlen(ID));
@@ -70,51 +78,51 @@ void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, vo
     // ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_conf));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-        wifi_scan_config_t scan = {
-            .ssid = 0,
-            .bssid = 0,
-            .channel = 0,
-            .show_hidden = true
-            };
+        // wifi_scan_config_t scan = {
+        //     .ssid = 0,
+        //     .bssid = 0,
+        //     .channel = 0,
+        //     .show_hidden = true
+        //     };
 
-            ESP_ERROR_CHECK(esp_wifi_scan_start(&scan, true));
-            uint16_t number = 5;
-            wifi_ap_record_t record[number];
-            memset(record, 0, sizeof(record));
-            uint16_t ap_count = 0;
-            ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, record));  
-            ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-            ESP_LOGI("WiFi", "Total APs scanned = %u", ap_count);  
+        //     ESP_ERROR_CHECK(esp_wifi_scan_start(&scan, true));
+        //     uint16_t number = 5;
+        //     wifi_ap_record_t record[number];
+        //     memset(record, 0, sizeof(record));
+        //     uint16_t ap_count = 0;
+        //     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, record));  
+        //     ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+        //     ESP_LOGI("WiFi", "Total APs scanned = %u", ap_count);  
             
-            for (int i = 0; i < ap_count; i++) {
-                size_t required_size = 0;
-                ESP_LOGI("Wifi","Signal strength is: %d \n", record[i].rssi);
-                esp_err_t check = nvs_get_str(handle_flash, (const char*)record[i].ssid, NULL, &required_size);
+        //     for (int i = 0; i < ap_count; i++) {
+        //         size_t required_size = 0;
+        //         ESP_LOGI("Wifi","Signal strength is: %d \n", record[i].rssi);
+        //         esp_err_t check = nvs_get_str(handle_flash, (const char*)record[i].ssid, NULL, &required_size);
                 
-                if (check == ESP_OK) {
-                    char* val = (char*) malloc(required_size);
-                    nvs_get_str(handle_flash, (const char*)record[i].ssid, val, &required_size);
-                    ESP_LOGI("Wifi","Password is: %s \n", val);
+        //         if (check == ESP_OK) {
+        //             char* val = (char*) malloc(required_size);
+        //             nvs_get_str(handle_flash, (const char*)record[i].ssid, val, &required_size);
+        //             ESP_LOGI("Wifi","Password is: %s \n", val);
                     
-                    static wifi_config_t wifi_conf;
+        //             static wifi_config_t wifi_conf;
 
-                    strcpy((char*)wifi_conf.sta.ssid, (const char*) record[i].ssid);
-                    strcpy((char*)wifi_conf.sta.password , val);
+        //             strcpy((char*)wifi_conf.sta.ssid, (const char*) record[i].ssid);
+        //             strcpy((char*)wifi_conf.sta.password , val);
 
-                    esp_wifi_set_config(WIFI_IF_STA, &wifi_conf);
+        //             esp_wifi_set_config(WIFI_IF_STA, &wifi_conf);
                     
-                    free(val);
+        //             free(val);
 
-                    esp_wifi_connect();
+        //             esp_wifi_connect();
 
-                    break;
-                }
+        //             break;
+        //         }
 
-                else if (check == ESP_ERR_NVS_NOT_FOUND) {
-                    ESP_LOGI("WiFi", "Password is not yet stored for this SSID %s", (const char*)record[i].ssid);
-                    continue;
-                }
-            }
+        //         else if (check == ESP_ERR_NVS_NOT_FOUND) {
+        //             ESP_LOGI("WiFi", "Password is not yet stored for this SSID %s", (const char*)record[i].ssid);
+        //             continue;
+        //         }
+        //    }
 
 
     // Up till this point, the sta init has finished
