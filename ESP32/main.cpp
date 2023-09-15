@@ -7,7 +7,6 @@
 #include <lcd_handler.h>
 #include <gpio_init.h>
 #include <freertos/ringbuf.h>
-#include <driver/uart.h>
 
 #include <string>
 #include <unordered_map>
@@ -58,6 +57,7 @@ RingbufHandle_t speakerBuf;
 // SemaphoreHandle_t camera_axis_sem;
 esp_websocket_client_handle_t audio_client;
 esp_websocket_client_handle_t uno_command_client;
+esp_websocket_client_handle_t gps_client;
 uint8_t uno_command_buffer[10];
 char* temp_audio_buffer = "";
 
@@ -81,6 +81,12 @@ const esp_websocket_client_config_t uno_command_client_conf = {
     .port = 4000,
     .disable_auto_reconnect = false,
   //  .headers = "identifier: Command client",
+};
+
+const esp_websocket_client_config_t gps_client_conf = {
+    .uri = "ws://34.87.246.254",
+    .port = 4006,
+    .disable_auto_reconnect = false,
 };
 
 // The number version of command
@@ -345,12 +351,40 @@ void speaker_task(void* param) {
         }
     }
 }
+
+void gps_task(void* param) {
+    bool sentence_start = false;
+    std::string gps_final_buf;
+    while (true) {
+        char data[1];
+        int length = 0;
+        ESP_ERROR_CHECK(uart_get_buffered_data_len(UART_NUM_2, (size_t*)&length));
+        length = uart_read_bytes(UART_NUM_2, data, 1, 100);
+        if (data[0] == '$' || sentence_start) {
+            if ( data[0] == '$' && gps_final_buf.size() > 7) {
+                // transmit to websocket server
+                esp_websocket_client_send_text(gps_client, gps_final_buf.c_str(), gps_final_buf.size(), 1000 / portTICK_PERIOD_MS);
+                gps_final_buf.clear();
+            }
+            sentence_start = true;
+            gps_final_buf.push_back(data[0]);
+            if ((data[0] == 'A' || data[0] == 'S' || data[0] == 'T') && gps_final_buf.size() < 7) {
+                sentence_start = false;
+                gps_final_buf.clear();
+            }
+        }
+    }
+}
 // Init sequence: GPIO -> I2C -> Servo -> Mic -> Wifi -> Web Socket 
 
 //#define WRITE_TO_FLASH
 #define ESPSPK
 extern "C" void app_main() {
-    
+
+    #ifdef ESPSPK
+    init_uart(25,26);
+    #endif
+
     vTaskDelay(25000 / portTICK_PERIOD_MS);
     esp_err_t ret = nvs_flash_init();
     vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -428,6 +462,7 @@ extern "C" void app_main() {
     ESP_LOGI("Servo", "Servo task created");
 
     xTaskCreatePinnedToCore(lcd_task, "LCD", 1024, NULL, 2, &lcd_task_handle, 1);
+
     #endif
     // Init I2S
     init_i2s();
@@ -439,6 +474,7 @@ extern "C" void app_main() {
     vTaskSuspend(audio_task_handle);
 
     #endif
+
     // Establishing connection between esp32 and node js server
     audio_client = esp_websocket_client_init(&audio_client_conf);
 
@@ -451,10 +487,14 @@ extern "C" void app_main() {
     // WARNING: I feel like we cannot differentiate between messages using the handler arg
 
     #ifdef ESPSPK
+    gps_client = esp_websocket_client_init(&gps_client_conf);
+    esp_websocket_client_start(gps_client);
     xTaskCreate(speaker_task, "speaker", 5000, NULL, 1, NULL);
+    xTaskCreatePinnedToCore(gps_task, "GPS", 1024, NULL, 2, NULL, 1);
+
     esp_websocket_register_events(audio_client, WEBSOCKET_EVENT_ANY, audio_client_event, (char*) 'a');
     #endif
 
     esp_websocket_client_start(audio_client);
+}
 
-} 
