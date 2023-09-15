@@ -110,3 +110,26 @@ void received_data_from_uno(uint8_t* data_buffer, uint8_t slave_address, uint8_t
     i2c_master_cmd_begin(I2C_PORT, cmd, 1000 / portTICK_PERIOD_MS);
     i2c_cmd_link_delete(cmd);
 }
+
+void init_uart(int tx, int rx) {
+    // put your setup code here, to run once:
+  const uart_port_t uart_num = UART_NUM_2;
+
+  uart_config_t uart_config = {
+    .baud_rate = 9600,
+    .data_bits = UART_DATA_8_BITS,
+    .parity = UART_PARITY_DISABLE,
+    .stop_bits = UART_STOP_BITS_1,
+    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    .rx_flow_ctrl_thresh = 120,
+    .source_clk = UART_SCLK_DEFAULT
+};
+// Configure UART parameters
+    ESP_ERROR_CHECK(uart_param_config(uart_num, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_2, tx, rx, -1, -1));
+    const int uart_buffer_size = (2048);
+    QueueHandle_t uart_queue;
+    // Install UART driver using an event queue here
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_2, uart_buffer_size, \
+                                            uart_buffer_size, 10, &uart_queue, 0));
+}
