@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <AFMotor.h>
+//#include <AFMotor.h>
 #include <Wire.h>
 #include <NewPing.h>
 
@@ -7,8 +7,8 @@
 #ifndef stepper_test
 
 const int stepper_en = 2;
-const int sonarpin2 = 10;
-const int sonarpin1 = 9;
+const int sonarpin2 = 7;
+const int sonarpin1 = 4;
 
 NewPing hcsr04_1(sonarpin2, A1, 200);
 NewPing hcsr04_2(sonarpin1, A0, 200);
@@ -16,6 +16,7 @@ NewPing hcsr04_2(sonarpin1, A0, 200);
 int command = 0;
 int num_byte = 0;
 int speed = 250;
+int motor13F = 3, motor13B = 11, motor24F = 5, motor24B = 6;
 uint32_t current_time = 0;
 
 int distance_back = 0, distance_front = 0;
@@ -24,31 +25,31 @@ String distance = "00000000s";
 
 bool CW = false, stepper_running = false;
 
-AF_DCMotor motor1(1); 
-AF_DCMotor motor2(2);
-AF_DCMotor motor3(3);
-AF_DCMotor motor4(4);
+// AF_DCMotor motor1(1); 
+// AF_DCMotor motor2(2);
+// AF_DCMotor motor3(3);
+// AF_DCMotor motor4(4);
 
-void activateMotor(int motor1_t, int motor2_t, int motor3_t, int motor4_t) {
-  motor1.run(motor1_t);
-  motor2.run(motor2_t);
-  motor3.run(motor3_t);
-  motor4.run(motor4_t);
-}
+// void activateMotor(int motor1_t, int motor2_t, int motor3_t, int motor4_t) {
+//   motor1.run(motor1_t);
+//   motor2.run(motor2_t);
+//   motor3.run(motor3_t);
+//   motor4.run(motor4_t);
+// }
 
-void setMotorSpeed(int scale) {
-  motor1.setSpeed(speed/scale);
-  motor2.setSpeed(speed/scale);
-  motor3.setSpeed(speed/scale);
-  motor4.setSpeed(speed/scale);
-}
+// void setMotorSpeed(int scale) {
+//   motor1.setSpeed(speed/scale);
+//   motor2.setSpeed(speed/scale);
+//   motor3.setSpeed(speed/scale);
+//   motor4.setSpeed(speed/scale);
+// }
 
-void rest() {
-  motor1.run(RELEASE);
-  motor2.run(RELEASE);
-  motor3.run(RELEASE);
-  motor4.run(RELEASE);
-}
+// void rest() {
+//   motor1.run(RELEASE);
+//   motor2.run(RELEASE);
+//   motor3.run(RELEASE);
+//   motor4.run(RELEASE);
+// }
 
 void receive_event_handler(int num_byte0) {
   if (Wire.available() == 1) {
@@ -74,14 +75,21 @@ void setup() {
   Wire.onRequest(request_event_handler);
   Wire.onReceive(receive_event_handler);
   Serial.begin(9600);
-  setMotorSpeed(1);
-  rest();
+  //setMotorSpeed(1);
+  // rest();
   
   pinMode(A0, INPUT);
   pinMode(A1, INPUT);
+
+  pinMode(motor13F, OUTPUT);
+  pinMode(motor13B, OUTPUT);
+  pinMode(motor24F, OUTPUT);
+  pinMode(motor24B, OUTPUT);
+
   pinMode(sonarpin2, OUTPUT);
   pinMode(sonarpin1, OUTPUT);
   pinMode(stepper_en, OUTPUT);
+  
   
   digitalWrite(sonarpin2, LOW);
   digitalWrite(sonarpin1, LOW);
@@ -121,12 +129,16 @@ void loop() {
 
   if (command == 0) {
     // activateMotor(FORWARD, FORWARD, FORWARD, FORWARD);
-    rest(); 
+    //rest(); 
+    analogWrite(motor13F, 0);
+    analogWrite(motor24F, 0);
+    analogWrite(motor13B, 0);
+    analogWrite(motor24B, 0);
     digitalWrite(stepper_en, LOW);
   }
 
   else {
-    setMotorSpeed(1);
+    //setMotorSpeed(1);
     //  if (distance_back < 15 || distance_front < 15)
     //   setMotorSpeed(2);
     switch (command)
@@ -134,32 +146,53 @@ void loop() {
     case 1:
     //Serial.println((distance_front));
       if (distance_front >= 10 || distance_front == 0)
-      activateMotor(FORWARD, FORWARD, FORWARD, FORWARD);
+      {
+        analogWrite(motor13F, speed);
+        analogWrite(motor24F, speed);
+      }
+      // activateMotor(FORWARD, FORWARD, FORWARD, FORWARD);
       else 
-      rest();
+      {
+        analogWrite(motor13F, 0);
+        analogWrite(motor24F, 0);
+      }
       break;
     
     case 2:
       if (distance_back >= 10 || distance_back == 0)
-      activateMotor(BACKWARD, BACKWARD, BACKWARD, BACKWARD);
-      else
-      rest();
+      {
+        analogWrite(motor13B, speed);
+        analogWrite(motor24B, speed);
+      }
+      else 
+      {
+        analogWrite(motor13B, 0);
+        analogWrite(motor24B, 0);
+      }
       break;
 
     case 3:
-      activateMotor(FORWARD, FORWARD, BACKWARD, BACKWARD);
+      // activateMotor(FORWARD, FORWARD, BACKWARD, BACKWARD);
+      analogWrite(motor13B, speed);
+      analogWrite(motor24F, speed);
       break;
     
     case 4:
-      activateMotor(BACKWARD, BACKWARD, FORWARD, FORWARD);
+      // activateMotor(BACKWARD, BACKWARD, FORWARD, FORWARD);
+      analogWrite(motor13F, speed);
+      analogWrite(motor24B, speed);
       break;
     
     case 5:
-      activateMotor(BACKWARD, BACKWARD, FORWARD, FORWARD);
+      // activateMotor(BACKWARD, BACKWARD, FORWARD, FORWARD);
+      analogWrite(motor13F, speed);
+      analogWrite(motor24B, speed);
       break;
 
     case 6:
-      activateMotor(FORWARD, FORWARD, BACKWARD, BACKWARD);
+      // activateMotor(FORWARD, FORWARD, BACKWARD, BACKWARD);
+      analogWrite(motor13B, speed);
+      analogWrite(motor24F, speed);
       break;
     
     case 11:
