@@ -1,15 +1,16 @@
-/*
+#include <string>
+// /*
 
-  This is a simple MJPEG streaming webserver implemented for AI-Thinker ESP32-CAM and
-  ESP32-EYE modules.
-  This is tested to work with VLC and Blynk video widget.
+//   This is a simple MJPEG streaming webserver implemented for AI-Thinker ESP32-CAM and
+//   ESP32-EYE modules.
+//   This is tested to work with VLC and Blynk video widget.
 
-  Inspired by and based on this Instructable: $9 RTSP Video Streamer Using the ESP32-CAM Board
-  (https://www.instructables.com/id/9-RTSP-Video-Streamer-Using-the-ESP32-CAM-Board/)
+//   Inspired by and based on this Instructable: $9 RTSP Video Streamer Using the ESP32-CAM Board
+//   (https://www.instructables.com/id/9-RTSP-Video-Streamer-Using-the-ESP32-CAM-Board/)
 
-  Board: AI-Thinker ESP32-CAM
+//   Board: AI-Thinker ESP32-CAM
 
-*/
+// */
 #define APP_CPU 1
 #define PRO_CPU 0
 #define WIFI_CONNECTED_BIT BIT0
@@ -40,16 +41,16 @@
 #include "camera_pins.h"
 
 
-#define SSID "OPTUS_4AFB46M"
+#define SSID "TP-Link_C7E2"
 #define ID "14363978"
-#define PASS "aliya67945du"
+#define PASS "33247489"
 
 esp_websocket_client_handle_t client;
 const esp_websocket_client_config_t client_conf = {
-  .uri = "ws://192.168.0.51",
-  .port = 4002,
+  .uri = "ws://34.87.246.254",
+  .port = 4003,
   .disable_auto_reconnect = false,
-  .buffer_size = 15000
+  .buffer_size = 5000
 };
 
 static uint8_t wifi_reconnecting_num = 0;
@@ -76,7 +77,7 @@ SemaphoreHandle_t frameSync = NULL;
 QueueHandle_t streamingClients;
 
 // We will try to achieve 25 FPS frame rate
-const int FPS = 14;
+const int FPS = 25;
 
 // We will handle web client requests every 50 ms (20 Hz)
 const int WSINTERVAL = 100;
@@ -215,6 +216,7 @@ void streamCB(void * pvParameters) {
         xSemaphoreTake( frameSync, portMAX_DELAY );
 
         esp_websocket_client_send_bin(client, (char*) camBuf, (size_t) camSize, portMAX_DELAY);
+        //Serial.println("send");
 
         //  The frame has been served. Release the semaphore and let other tasks run.
         //  If there is a frame switch ready, it will happen now in between frames
@@ -223,7 +225,7 @@ void streamCB(void * pvParameters) {
     
     //  Let other tasks run after serving every client
     taskYIELD();
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    vTaskDelayUntil(&xLastWakeTime, 40 / portTICK_PERIOD_MS);
   }
 }
 
@@ -251,6 +253,11 @@ void handle_data(void* arg, esp_event_base_t base, int32_t event_id, void* event
           config->set_quality(config, val);
           break;
         }     
+
+        case 'f': {
+          
+          break;
+        }
       }
     }
   }
@@ -312,13 +319,14 @@ void mjpegCB(void* pvParameters) {
 
     //  After every server client handling request, we let other tasks run and then pause
     taskYIELD();
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    // vTaskDelayUntil(&xLastWakeTime, 40 / portTICK_PERIOD_MS);
   }
 }
 
 void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* event_data) {
   if (base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_STA_START) {
+            esp_wifi_connect();          
             ESP_LOGI("WIFI", "CONNECTING...");
         }
 
@@ -379,70 +387,78 @@ void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, vo
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event_handler, s_wifi_event_group, &instance_got_ip));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, event_handler, s_wifi_event_group, &instance_disconnected));
     
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    
 
     // UTS Authentication
     // esp_wifi_sta_wpa2_ent_set_identity((uint8_t*) ID, strlen(ID));
     // esp_wifi_sta_wpa2_ent_set_username((uint8_t*) USERNAME, strlen(USERNAME));
     // esp_wifi_sta_wpa2_ent_set_password((uint8_t*) PASSWORD, strlen(PASSWORD));
     // esp_wifi_sta_wpa2_ent_enable();
-
+    wifi_config_t wifi_conf;
+            // .sta {
+            //     .ssid = SSID,
+            //     .password = PASS,
+            // }
+        
+    strcpy((char*)wifi_conf.sta.ssid, (const char*) SSID);
+    strcpy((char*)wifi_conf.sta.password , PASS);
     // Uncomment the line below to use Michael's network
-    // ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_conf));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_conf));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-        wifi_scan_config_t scan = {
-            .ssid = 0,
-            .bssid = 0,
-            .channel = 0,
-            .show_hidden = true
-            };
+    //     wifi_scan_config_t scan = {
+    //         .ssid = 0,
+    //         .bssid = 0,
+    //         .channel = 0,
+    //         .show_hidden = true
+    //         };
 
-            ESP_ERROR_CHECK(esp_wifi_scan_start(&scan, true));
-            uint16_t number = 5;
-            wifi_ap_record_t record[number];
-            memset(record, 0, sizeof(record));
-            uint16_t ap_count = 0;
-            ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, record));  
-            ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-            ESP_LOGI("WiFi", "Total APs scanned = %u", ap_count);  
+    //         ESP_ERROR_CHECK(esp_wifi_scan_start(&scan, true));
+    //         uint16_t number = 5;
+    //         wifi_ap_record_t record[number];
+    //         memset(record, 0, sizeof(record));
+    //         uint16_t ap_count = 0;
+    //         ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, record));  
+    //         ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+    //         ESP_LOGI("WiFi", "Total APs scanned = %u", ap_count);  
             
-            for (int i = 0; i < ap_count; i++) {
-                size_t required_size = 0;
-                ESP_LOGI("Wifi","Signal strength is: %d \n", record[i].rssi);
-                esp_err_t check = nvs_get_str(handle_flash, (const char*)record[i].ssid, NULL, &required_size);
+    //         for (int i = 0; i < ap_count; i++) {
+    //             size_t required_size = 0;
+    //             ESP_LOGI("Wifi","Signal strength is: %d \n", record[i].rssi);
+    //             esp_err_t check = nvs_get_str(handle_flash, (const char*)record[i].ssid, NULL, &required_size);
                 
-                if (check == ESP_OK) {
-                    char* val = (char*) malloc(required_size);
-                    nvs_get_str(handle_flash, (const char*)record[i].ssid, val, &required_size);
-                    ESP_LOGI("Wifi","Password is: %s \n", val);
+    //             if (check == ESP_OK) {
+    //                 char* val = (char*) malloc(required_size);
+    //                 nvs_get_str(handle_flash, (const char*)record[i].ssid, val, &required_size);
+    //                 ESP_LOGI("Wifi","Password is: %s \n", val);
                     
-                    static wifi_config_t wifi_conf;
+    //                 static wifi_config_t wifi_conf;
 
-                    strcpy((char*)wifi_conf.sta.ssid, (const char*) record[i].ssid);
-                    strcpy((char*)wifi_conf.sta.password , val);
+    //                 strcpy((char*)wifi_conf.sta.ssid, (const char*) record[i].ssid);
+    //                 strcpy((char*)wifi_conf.sta.password , val);
 
-                    esp_wifi_set_config(WIFI_IF_STA, &wifi_conf);
+    //                 esp_wifi_set_config(WIFI_IF_STA, &wifi_conf);
                     
-                    free(val);
+    //                 free(val);
 
-                    esp_wifi_connect();
+    //                 esp_wifi_connect();
 
-                    break;
-                }
+    //                 break;
+    //             }
 
-                else if (check == ESP_ERR_NVS_NOT_FOUND) {
-                    ESP_LOGI("WiFi", "Password is not yet stored for this SSID %s", (const char*)record[i].ssid);
-                    continue;
-                }
-            }
+    //             else if (check == ESP_ERR_NVS_NOT_FOUND) {
+    //                 ESP_LOGI("WiFi", "Password is not yet stored for this SSID %s", (const char*)record[i].ssid);
+    //                 continue;
+    //             }
+    //         }
 
 
-    // Up till this point, the sta init has finished
-    // Wait bits simply wait for either WIFI_CONNECTED_BIT or WIFI_FAIL_BIT to set, wait time depends on the last param of
-    // the function. Here, portMAX_DELAY means the program will keep waiting til' one of the 2 bits is set
+    // // Up till this point, the sta init has finished
+    // // Wait bits simply wait for either WIFI_CONNECTED_BIT or WIFI_FAIL_BIT to set, wait time depends on the last param of
+    // // the function. Here, portMAX_DELAY means the program will keep waiting til' one of the 2 bits is set
 
-    // Maybe in the future we can try to make a timeout for this
+    // // Maybe in the future we can try to make a timeout for this
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
     ESP_LOGI("Wifi", "Wifi bits set");
     if (bits & WIFI_CONNECTED_BIT) {
@@ -466,6 +482,7 @@ void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, vo
 //#define WRITE_TO_FLASH
 void setup()
 {
+
   esp_err_t ret = nvs_flash_init();
   vTaskDelay(1000 / portTICK_PERIOD_MS);
   nvs_handle_t handle_flash;
@@ -488,7 +505,7 @@ void setup()
 #endif
   // Setup Serial connection:
   Serial.begin(115200);
-  delay(1000); // wait for a second to let Serial connect
+  delay(25000); // wait for a second to let Serial connect
 
 
   // Configure the camera
@@ -517,8 +534,8 @@ void setup()
   // Frame parameters: pick one
   //  config.frame_size = FRAMESIZE_UXGA;
   //  config.frame_size = FRAMESIZE_SVGA;
-  //config.frame_size = FRAMESIZE_QQVGA;
-  config.frame_size = FRAMESIZE_HVGA;
+  config.frame_size = FRAMESIZE_QVGA;
+  //config.frame_size = FRAMESIZE_HVGA;
   config.jpeg_quality = 40;
   config.fb_count = 2;
 #if defined(CAMERA_MODEL_ESP_EYE)
@@ -526,6 +543,7 @@ void setup()
   pinMode(14, INPUT_PULLUP);
 #endif
 
+  pinMode(4, OUTPUT);
   if (cam.init(config) != ESP_OK) {
     Serial.println("Error initializing the camera");
     delay(10000);
@@ -546,8 +564,17 @@ void setup()
   // esp_wifi_sta_wpa2_ent_set_password((uint8_t*) PASS, strlen(PASS));
   // esp_wifi_sta_wpa2_ent_enable();
 
-  connect_to_wifi(event_handler, handle_flash);
-  ESP_LOGI("WiFi", "Connecting to WiFi");
+WiFi.mode(WIFI_STA);
+  WiFi.begin(SSID, PASS);
+  Serial.print("Connecting to WiFi ..");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print('.');
+    delay(1000);
+  }
+  Serial.println(WiFi.localIP());
+  // connect_to_wifi(event_handler, handle_flash);
+  // Serial.println("Connecting to WiFi");
+  // delay(5000);
   // Serial.print("Stream Link: http://");
   // Serial.print(ip);
   // Serial.println("/mjpeg/1");
@@ -566,6 +593,9 @@ void setup()
 
 
 void loop() {
-  vTaskDelay(500);
+  //Serial.println(WiFi.RSSI());
+  // digitalWrite(4, HIGH);
+  //vTaskDelay(500);
   
 }
+
