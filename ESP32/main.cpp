@@ -8,6 +8,7 @@
 #include <gpio_init.h>
 #include <freertos/ringbuf.h>
 
+
 #include <string>
 #include <unordered_map>
 
@@ -43,14 +44,21 @@
 #define CAM_X_CHANNEL LEDC_CHANNEL_0
 #define CAM_Y_CHANNEL LEDC_CHANNEL_1
 
+// command the line below to flash code to the other esp that handle microphone
+#define ESPSPK
+
 unsigned int ip_address_display_time = 15000, lcd_update = 0;
 static uint8_t wifi_reconnecting_num = 0;
+
+nvs_handle_t handle_flash;
+
 
 float cam_x_cur_angle = 90, cam_y_cur_angle = 45;
 int cam_axis_command = 0;
 TaskHandle_t camera_task;
 TaskHandle_t sonar_sensor_task;
 TaskHandle_t audio_task_handle;
+TaskHandle_t new_server;
 TaskHandle_t lcd_task_handle;
 RingbufHandle_t speakerBuf;
 
@@ -61,6 +69,9 @@ esp_websocket_client_handle_t gps_client;
 uint8_t uno_command_buffer[10];
 char* temp_audio_buffer = "";
 
+bool new_server_ip = false;
+std::string new_server_address = "";
+
 // Variables to drive LCD
 bool lcd_activated = false;
 std::string temp_lcd_string = "";
@@ -69,22 +80,26 @@ char line_2_lcd[16];
 
 // This connection is for constant streaming of audio
 const esp_websocket_client_config_t audio_client_conf = {
-  .uri = "ws://34.87.246.254",
+  .uri = "ws://192.168.1.100",
+  #ifdef ESPSPK
   .port = 4005, // This is the server port where our client is connected, 4001 for mic, 4005 for speaker
+  #else
+  .port = 4001, // mic port
+  #endif
   .disable_auto_reconnect = false,
  // .headers = "identifier: audio client",
   .buffer_size = 5000,
 };
 // This connection is for receiving command from network client
 const esp_websocket_client_config_t uno_command_client_conf = {
-    .uri = "ws://34.87.246.254",
+    .uri = "ws://192.168.1.100",
     .port = 4000,
     .disable_auto_reconnect = false,
   //  .headers = "identifier: Command client",
 };
 
 const esp_websocket_client_config_t gps_client_conf = {
-    .uri = "ws://34.87.246.254",
+    .uri = "ws://192.168.1.100",
     .port = 4006,
     .disable_auto_reconnect = false,
 };
@@ -96,7 +111,35 @@ std::unordered_map<std::string, uint8_t> command = {
     {"stopsu", 16}
 };  
 
+void new_server_task(void* param) {
 
+    while (true) {
+        if (new_server_ip) {
+            
+            #ifndef ESPSPK
+            esp_websocket_client_stop(uno_command_client);
+            esp_websocket_client_set_uri(uno_command_client, (new_server_address + "4000").c_str());
+            esp_websocket_client_start(uno_command_client);
+        
+            #endif
+
+            esp_websocket_client_stop(audio_client);
+            esp_websocket_client_set_uri(audio_client, (new_server_address +std::to_string(audio_client_conf.port)).c_str());
+            esp_websocket_client_start(audio_client);
+            
+            #ifdef ESPSPK
+            esp_websocket_client_stop(gps_client);
+            esp_websocket_client_set_uri(gps_client, (new_server_address + "4006").c_str());
+            esp_websocket_client_start(gps_client);
+            #endif
+            nvs_set_str(handle_flash, "websocket_ip", new_server_address.c_str());
+            nvs_commit(handle_flash);
+            
+            new_server_ip = false;
+        }
+        vTaskSuspend(NULL);
+    }
+}
 
 void servo_task(void* param) {
     while (true) {
@@ -142,18 +185,18 @@ void read_distance_task(void* param) {
     uint8_t distance_buffer[2];
     while (true) {
         if (esp_websocket_client_is_connected(uno_command_client)) { 
-        received_data_from_uno(distance_buffer, UNO, 2);
-        std::string distance_string = "di";
-        distance_string.append(std::to_string(distance_buffer[0]) + "b");
-        distance_string.append(std::to_string(distance_buffer[1]) + "f");
-        esp_websocket_client_send_text(uno_command_client, distance_string.c_str(), distance_string.size(), 10000 / portTICK_PERIOD_MS);
+            received_data_from_uno(distance_buffer, UNO, 2);
+            std::string distance_string = "di";
+            distance_string.append(std::to_string(distance_buffer[0]) + "b");
+            distance_string.append(std::to_string(distance_buffer[1]) + "f");
+            esp_websocket_client_send_text(uno_command_client, distance_string.c_str(), distance_string.size(), 10000 / portTICK_PERIOD_MS);
         }
         // this function will trigger in a 500ms interval
 
         // Temporarily checking RSSI
-        wifi_ap_record_t ap;
-        esp_wifi_sta_get_ap_info(&ap);
-        printf("%d\n", ap.rssi);
+        // wifi_ap_record_t ap;
+        // esp_wifi_sta_get_ap_info(&ap);
+        // printf("%d\n", ap.rssi);
         xTaskDelayUntil(&last_wake_time, 500 / portTICK_PERIOD_MS);
     }
 }
@@ -164,7 +207,6 @@ void audio_task(void* param) {
         if (esp_websocket_client_is_connected(audio_client)) {
             stream_to_server(audio_client);
         }
-
     }
 }
 
@@ -202,7 +244,7 @@ void lcd_task(void* param) {
                 lcd_activated = false;
             }
             
-            vTaskDelay(2000 / portTICK_PERIOD_MS);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
 
         else {
@@ -304,12 +346,29 @@ void event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* eve
                     }
                 break;    
                 }
+
+                case 'p': {
+                    temp.pop_back();
+                    temp.pop_back(); 
+                    LCD_clearScreen();
+                    LCD_setCursor(0, 0);
+                    LCD_writeStr("New server");
+                    LCD_setCursor(0, 1);
+                    LCD_writeStr((char*) temp.c_str());
+
+                    new_server_ip = true;
+                    new_server_address = "ws://" + temp + ":";
+                    vTaskResume(new_server);
+                }
             }
         }
 
         else if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
             ESP_LOGI("Web", "client disconnected");
             send_command_to_uno((0 & 0xFF), UNO, 1);
+            LCD_clearScreen();
+            LCD_setCursor(0, 0);
+            LCD_writeStr("Disconnected");
         }
 
         else if (event_id == WEBSOCKET_EVENT_CONNECTED) {
@@ -327,7 +386,25 @@ void audio_client_event(void* arg, esp_event_base_t base, int32_t event_id, void
         if (event_id == WEBSOCKET_EVENT_DATA) {
             
             esp_websocket_event_data_t* received_buffer = (esp_websocket_event_data_t*) event_data;
+
+            if (received_buffer->data_len > 20) {
             xRingbufferSend(speakerBuf, received_buffer->data_ptr, received_buffer->data_len, 1000 / portTICK_PERIOD_MS);
+            }
+
+            else if (received_buffer->data_len < 20 && received_buffer->data_len > 2) {
+                std::string temp (received_buffer->data_ptr, received_buffer->data_len);
+                ESP_LOGI("New server", "New Server is %s", temp.c_str());
+                if (temp[temp.size() - 1] == 'p') {
+                    temp.pop_back();
+                    temp.pop_back();
+
+                    new_server_ip = true;
+                    new_server_address = "ws://" + temp + ":";
+                    vTaskResume(new_server);
+                }
+            }
+
+
             //ESP_LOGI("audio", "len: %d", received_buffer->data_len);
             //output_to_speaker(received_buffer->data_ptr, received_buffer->data_len); 
             // received_buffer->data_ptr = NULL;
@@ -363,7 +440,9 @@ void gps_task(void* param) {
         if (data[0] == '$' || sentence_start) {
             if ( data[0] == '$' && gps_final_buf.size() > 7) {
                 // transmit to websocket server
-                esp_websocket_client_send_text(gps_client, gps_final_buf.c_str(), gps_final_buf.size(), 1000 / portTICK_PERIOD_MS);
+                if (esp_websocket_client_is_connected(audio_client)) {
+                    esp_websocket_client_send_text(gps_client, gps_final_buf.c_str(), gps_final_buf.size(), 1000 / portTICK_PERIOD_MS);
+                }
                 gps_final_buf.clear();
             }
             sentence_start = true;
@@ -373,12 +452,17 @@ void gps_task(void* param) {
                 gps_final_buf.clear();
             }
         }
+
+        if (gps_final_buf.size() > 200) {
+            gps_final_buf.clear();
+        }
+
+        vTaskDelay(30 / portTICK_PERIOD_MS);
     }
 }
 // Init sequence: GPIO -> I2C -> Servo -> Mic -> Wifi -> Web Socket 
 
 //#define WRITE_TO_FLASH
-#define ESPSPK
 extern "C" void app_main() {
 
     #ifdef ESPSPK
@@ -388,15 +472,7 @@ extern "C" void app_main() {
     vTaskDelay(25000 / portTICK_PERIOD_MS);
     esp_err_t ret = nvs_flash_init();
     vTaskDelay(1000 / portTICK_PERIOD_MS);
-    nvs_handle_t handle_flash;
     nvs_open("storage", NVS_READWRITE, &handle_flash);
-
-    #ifdef WRITE_TO_FLASH
-
-    nvs_set_str(handle_flash, "OPTUS_4AFB46M", "aliya67945du");
-    nvs_commit(handle_flash);
-
-    #endif
 
     // This should be put at the beginning
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -405,13 +481,31 @@ extern "C" void app_main() {
     }
     ESP_ERROR_CHECK(ret);
 
-    size_t required_size = 0;
-    // nvs_set_str(handle_flash, "test", "successful");
-    // nvs_commit(handle_flash);
+    #ifndef ESPSPK
+    uno_command_client = esp_websocket_client_init(&uno_command_client_conf);
+    #else
+    gps_client = esp_websocket_client_init(&gps_client_conf);
+    #endif
 
-    // nvs_get_str(handle_flash, "OPTUS-4AFB46M", NULL, &required_size);
-    // char* val = (char*) malloc(required_size);
-    // nvs_get_str(handle_flash, "OPTUS-4AFB46M", val, &required_size);
+    audio_client = esp_websocket_client_init(&audio_client_conf);
+
+    size_t required_size = 0;
+
+    esp_err_t check = nvs_get_str(handle_flash, "websocket_ip", NULL, &required_size);
+    if (check == ESP_OK) {
+        char* val = (char*) malloc(required_size);
+        nvs_get_str(handle_flash, "websocket_ip", val, &required_size);
+        std::string temp_ip(val); 
+        if (temp_ip.size() > 0) {
+            esp_websocket_client_set_uri(uno_command_client, (temp_ip + "4000").c_str());
+            esp_websocket_client_set_uri(audio_client, (temp_ip + std::to_string(audio_client_conf.port)).c_str());
+            esp_websocket_client_set_uri(gps_client, (temp_ip + "4006").c_str());
+        }
+        free(val);
+    }
+    else {
+        ESP_LOGI("WebSocket_IP", "No key stored");
+    }
     // ESP_LOGI("Test","Data read is: %s \n", val);
     // free(val);
 
@@ -475,11 +569,7 @@ extern "C" void app_main() {
 
     #endif
 
-    // Establishing connection between esp32 and node js server
-    audio_client = esp_websocket_client_init(&audio_client_conf);
-
     #ifndef ESPSPK
-    uno_command_client = esp_websocket_client_init(&uno_command_client_conf);
     esp_websocket_register_events(uno_command_client, WEBSOCKET_EVENT_ANY, event_handler, (char*) 'c');
     esp_websocket_client_start(uno_command_client);
 
@@ -487,14 +577,15 @@ extern "C" void app_main() {
     // WARNING: I feel like we cannot differentiate between messages using the handler arg
 
     #ifdef ESPSPK
-    gps_client = esp_websocket_client_init(&gps_client_conf);
     esp_websocket_client_start(gps_client);
-    xTaskCreate(speaker_task, "speaker", 5000, NULL, 1, NULL);
-    xTaskCreatePinnedToCore(gps_task, "GPS", 1024, NULL, 2, NULL, 1);
-
+    xTaskCreatePinnedToCore(speaker_task, "speaker", 5000, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(gps_task, "GPS", 2048, NULL, 1, NULL, 1);
     esp_websocket_register_events(audio_client, WEBSOCKET_EVENT_ANY, audio_client_event, (char*) 'a');
     #endif
 
     esp_websocket_client_start(audio_client);
+
+    xTaskCreate(new_server_task, "Reconnect to new server", 8192, NULL, 1, &new_server);
+    vTaskSuspend(new_server);
 }
 
