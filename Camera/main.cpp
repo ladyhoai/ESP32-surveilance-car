@@ -47,14 +47,17 @@
 
 esp_websocket_client_handle_t client;
 const esp_websocket_client_config_t client_conf = {
-  .uri = "ws://34.87.246.254",
+  .uri = "ws://192.168.1.100",
   .port = 4003,
   .disable_auto_reconnect = false,
   .buffer_size = 5000
 };
 
 static uint8_t wifi_reconnecting_num = 0;
+bool new_server_ip = false;
+std::string new_server_address = "";
 
+nvs_handle_t handle_flash;
 OV2640 cam;
 // Set your Static IP address
 IPAddress local_IP(172, 19, 119, 11);
@@ -69,6 +72,7 @@ IPAddress subnet(255, 255, 254, 0);
 TaskHandle_t tMjpeg;   // handles client connections to the webserver
 TaskHandle_t tCam;     // handles getting picture frames from the camera and storing them locally
 TaskHandle_t tStream;  // actually streaming frames to all connected clients
+TaskHandle_t new_server;
 
 // frameSync semaphore is used to prevent streaming buffer as it is replaced with the next frame
 SemaphoreHandle_t frameSync = NULL;
@@ -89,6 +93,24 @@ const int WSINTERVAL = 100;
 // Commonly used variables:
 volatile size_t camSize;    // size of the current frame, byte
 volatile char* camBuf;      // pointer to the current frame
+
+void new_server_task(void* param) {
+  while (true) {
+    if (new_server_ip) {
+
+        esp_websocket_client_stop(client);
+        delay(4000);
+        nvs_set_str(handle_flash, "websocket_ip", new_server_address.c_str());
+        nvs_commit(handle_flash);
+        esp_websocket_client_set_uri(client, new_server_address.c_str());
+        esp_websocket_client_start(client);
+        nvs_set_str(handle_flash, "websocket_ip", new_server_address.c_str());
+        nvs_commit(handle_flash);
+        new_server_ip = false;
+    }
+    vTaskSuspend(NULL);
+    }
+}
 
 char* allocateMemory(char* aPtr, size_t aSize) {
 
@@ -238,7 +260,6 @@ void handle_data(void* arg, esp_event_base_t base, int32_t event_id, void* event
 
     else if (event_id == WEBSOCKET_EVENT_DISCONNECTED) {
       Serial.println("Disconnected from server");
-      ESP.restart();
     }
 
     else if (event_id == WEBSOCKET_EVENT_DATA) {
@@ -254,8 +275,13 @@ void handle_data(void* arg, esp_event_base_t base, int32_t event_id, void* event
           break;
         }     
 
-        case 'f': {
-          
+        case 'p': {
+          temp.pop_back();
+          temp.pop_back();
+          new_server_ip = true;
+          new_server_address = "ws://" + temp + ":" + std::to_string(client_conf.port); 
+          Serial.println(new_server_address.c_str());
+          vTaskResume(new_server);
           break;
         }
       }
@@ -278,7 +304,6 @@ void mjpegCB(void* pvParameters) {
   frameSync = xSemaphoreCreateBinary();
   xSemaphoreGive( frameSync );
 
-  client = esp_websocket_client_init(&client_conf);
   esp_websocket_register_events(client, WEBSOCKET_EVENT_ANY, handle_data, NULL);
   esp_websocket_client_start(client);
 
@@ -304,6 +329,8 @@ void mjpegCB(void* pvParameters) {
     &tStream,
     APP_CPU);
 
+  xTaskCreatePinnedToCore(new_server_task, "Reconnect to new server", 4096, NULL, 1, &new_server, 0);
+    vTaskSuspend(new_server); 
   //  Registering webserver handling routines
   //server.on("/mjpeg/1", HTTP_GET, handleJPGSstream);
   //server.on("/jpg", HTTP_GET, handleJPG);
@@ -482,29 +509,29 @@ void connect_to_wifi(void (*event_handler) (void*, esp_event_base_t, int32_t, vo
 //#define WRITE_TO_FLASH
 void setup()
 {
-
+  Serial.begin(115200);
   esp_err_t ret = nvs_flash_init();
   vTaskDelay(1000 / portTICK_PERIOD_MS);
-  nvs_handle_t handle_flash;
   nvs_open("storage", NVS_READWRITE, &handle_flash);
 
-#ifdef WRITE_TO_FLASH
+  size_t required_size = 0;
+  client = esp_websocket_client_init(&client_conf);
 
-    nvs_set_str(handle_flash, "OPTUS_4AFB46M", "aliya67945du");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "haha", "123456789");
-    nvs_commit(handle_flash);
-    nvs_set_str(handle_flash, "Guests network", "thisisaguestnetwork");
-    nvs_commit(handle_flash);
-    
-    nvs_set_str(handle_flash, "UTS-WiFi", "I14363978Pln31042003!");
-    nvs_commit(handle_flash);
-    
-    nvs_set_str(handle_flash, "ZMI_C8D3", "64682812");
-    nvs_commit(handle_flash);
-#endif
+  esp_err_t check = nvs_get_str(handle_flash, "websocket_ip", NULL, &required_size);
+  if (check == ESP_OK) {
+      char* val = (char*) malloc(required_size);
+      nvs_get_str(handle_flash, "websocket_ip", val, &required_size); 
+      std::string temp_ip(val); 
+      
+      if (temp_ip.size() > 0)
+        esp_websocket_client_set_uri(client, val);
+
+      free(val);
+  }
+  else {
+      ESP_LOGI("WebSocket_IP", "No key stored");
+  }
   // Setup Serial connection:
-  Serial.begin(115200);
   delay(25000); // wait for a second to let Serial connect
 
 
@@ -572,14 +599,7 @@ WiFi.mode(WIFI_STA);
     delay(1000);
   }
   Serial.println(WiFi.localIP());
-  // connect_to_wifi(event_handler, handle_flash);
-  // Serial.println("Connecting to WiFi");
-  // delay(5000);
-  // Serial.print("Stream Link: http://");
-  // Serial.print(ip);
-  // Serial.println("/mjpeg/1");
-
-
+  
   // Start mainstreaming RTOS task
   xTaskCreatePinnedToCore(
     mjpegCB,
@@ -593,9 +613,6 @@ WiFi.mode(WIFI_STA);
 
 
 void loop() {
-  //Serial.println(WiFi.RSSI());
-  // digitalWrite(4, HIGH);
-  //vTaskDelay(500);
   
 }
 
